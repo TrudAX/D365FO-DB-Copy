@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Version Information -->
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.$([System.DateTime]::Now.Year).$([System.DateTime]::Now.DayOfYear)</AssemblyVersion>
+    <FileVersion>1.0.$([System.DateTime]::Now.Year).$([System.DateTime]::Now.DayOfYear)</FileVersion>
+    <Company>Denis Trunin</Company>
+    <Copyright>Copyright © Denis Trunin $([System.DateTime]::Now.Year)</Copyright>
+    <Authors>Denis Trunin</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+  </ItemGroup>
+
+</Project>

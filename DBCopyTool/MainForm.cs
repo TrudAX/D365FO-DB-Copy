@@ -1,0 +1,701 @@
+using DBCopyTool.Helpers;
+using DBCopyTool.Models;
+using DBCopyTool.Services;
+using System.ComponentModel;
+
+namespace DBCopyTool
+{
+    public partial class MainForm : Form
+    {
+        private AppConfiguration _currentConfig = null!;
+        private ConfigManager _configManager;
+        private CopyOrchestrator? _orchestrator;
+        private BindingList<TableInfo> _tablesBindingList;
+        private bool _isExecuting = false;
+        private bool _isUpdatingComboBox = false;
+        private System.Windows.Forms.Timer _updateTimer;
+
+        public MainForm()
+        {
+            InitializeComponent();
+            _configManager = new ConfigManager();
+            _tablesBindingList = new BindingList<TableInfo>();
+
+            // Initialize timer for UI updates
+            _updateTimer = new System.Windows.Forms.Timer();
+            _updateTimer.Interval = 500;
+            _updateTimer.Tick += UpdateTimer_Tick;
+
+            InitializeDataGrid();
+            LoadInitialConfiguration();
+            UpdateButtonStates();
+        }
+
+        private void InitializeDataGrid()
+        {
+            dgvTables.AutoGenerateColumns = false;
+            dgvTables.DataSource = _tablesBindingList;
+
+            // Enable sorting for all columns
+            dgvTables.AllowUserToOrderColumns = true;
+
+            // Add context menu for copying table name
+            var contextMenu = new ContextMenuStrip();
+            var copyTableNameItem = new ToolStripMenuItem("Copy Table Name");
+            copyTableNameItem.Click += CopyTableName_Click;
+            contextMenu.Items.Add(copyTableNameItem);
+            dgvTables.ContextMenuStrip = contextMenu;
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "TableName",
+                HeaderText = "Table Name",
+                Name = "TableName",
+                Width = 150,
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "TableId",
+                HeaderText = "TableID",
+                Name = "TableId",
+                Width = 80,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "StrategyDisplay",
+                HeaderText = "Strategy",
+                Name = "Strategy",
+                Width = 100,
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "Tier2RowCountDisplay",
+                HeaderText = "Tier2 Rows",
+                Name = "Tier2Rows",
+                Width = 100,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "Tier2SizeGBDisplay",
+                HeaderText = "Tier2 Size (GB)",
+                Name = "Tier2Size",
+                Width = 80,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "Status",
+                HeaderText = "Status",
+                Name = "Status",
+                Width = 100,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleCenter },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "RecordsFetched",
+                HeaderText = "Records Fetched",
+                Name = "RecordsFetched",
+                Width = 100,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "MinRecId",
+                HeaderText = "Min RecId",
+                Name = "MinRecId",
+                Width = 120,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "FetchTimeDisplay",
+                HeaderText = "Fetch Time (s)",
+                Name = "FetchTime",
+                Width = 80,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "InsertTimeDisplay",
+                HeaderText = "Insert Time (s)",
+                Name = "InsertTime",
+                Width = 80,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "Error",
+                HeaderText = "Error",
+                Name = "Error",
+                Width = 200,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+        }
+
+        private void LoadInitialConfiguration()
+        {
+            try
+            {
+                _currentConfig = _configManager.LoadLastOrDefault();
+                LoadConfigurationIntoUI();
+                RefreshConfigDropdown();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error loading configuration: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                _currentConfig = AppConfiguration.CreateDefault();
+                LoadConfigurationIntoUI();
+            }
+        }
+
+        private void LoadConfigurationIntoUI()
+        {
+            // Connection tab
+            txtAlias.Text = _currentConfig.Alias;
+            txtTier2ServerDb.Text = _currentConfig.Tier2Connection.ServerDatabase;
+            txtTier2Username.Text = _currentConfig.Tier2Connection.Username;
+            txtTier2Password.Text = _currentConfig.Tier2Connection.Password;
+            nudTier2ConnTimeout.Value = _currentConfig.Tier2Connection.ConnectionTimeout;
+            nudTier2CmdTimeout.Value = _currentConfig.Tier2Connection.CommandTimeout;
+
+            txtAxDbServerDb.Text = _currentConfig.AxDbConnection.ServerDatabase;
+            txtAxDbUsername.Text = _currentConfig.AxDbConnection.Username;
+            txtAxDbPassword.Text = _currentConfig.AxDbConnection.Password;
+            nudAxDbCmdTimeout.Value = _currentConfig.AxDbConnection.CommandTimeout;
+
+            nudParallelFetch.Value = _currentConfig.ParallelFetchConnections;
+            nudParallelInsert.Value = _currentConfig.ParallelInsertConnections;
+
+            // Tables tab
+            txtTablesToInclude.Text = _currentConfig.TablesToInclude;
+            txtTablesToExclude.Text = _currentConfig.TablesToExclude;
+            txtFieldsToExclude.Text = _currentConfig.FieldsToExclude;
+            nudDefaultRecordCount.Value = _currentConfig.DefaultRecordCount;
+            txtStrategyOverrides.Text = _currentConfig.StrategyOverrides;
+
+            UpdateConnectionTabTitle();
+        }
+
+        private void SaveConfigurationFromUI()
+        {
+            _currentConfig.Alias = txtAlias.Text;
+            _currentConfig.Tier2Connection.ServerDatabase = txtTier2ServerDb.Text;
+            _currentConfig.Tier2Connection.Username = txtTier2Username.Text;
+            _currentConfig.Tier2Connection.Password = txtTier2Password.Text;
+            _currentConfig.Tier2Connection.ConnectionTimeout = (int)nudTier2ConnTimeout.Value;
+            _currentConfig.Tier2Connection.CommandTimeout = (int)nudTier2CmdTimeout.Value;
+
+            _currentConfig.AxDbConnection.ServerDatabase = txtAxDbServerDb.Text;
+            _currentConfig.AxDbConnection.Username = txtAxDbUsername.Text;
+            _currentConfig.AxDbConnection.Password = txtAxDbPassword.Text;
+            _currentConfig.AxDbConnection.CommandTimeout = (int)nudAxDbCmdTimeout.Value;
+
+            _currentConfig.ParallelFetchConnections = (int)nudParallelFetch.Value;
+            _currentConfig.ParallelInsertConnections = (int)nudParallelInsert.Value;
+
+            _currentConfig.TablesToInclude = txtTablesToInclude.Text;
+            _currentConfig.TablesToExclude = txtTablesToExclude.Text;
+            _currentConfig.FieldsToExclude = txtFieldsToExclude.Text;
+            _currentConfig.DefaultRecordCount = (int)nudDefaultRecordCount.Value;
+            _currentConfig.StrategyOverrides = txtStrategyOverrides.Text;
+        }
+
+        private void RefreshConfigDropdown()
+        {
+            _isUpdatingComboBox = true;
+            try
+            {
+                var configs = _configManager.GetAvailableConfigurations();
+                cmbConfig.Items.Clear();
+                foreach (var config in configs)
+                {
+                    cmbConfig.Items.Add(config);
+                }
+
+                if (configs.Contains(_currentConfig.ConfigName))
+                {
+                    cmbConfig.SelectedItem = _currentConfig.ConfigName;
+                }
+            }
+            finally
+            {
+                _isUpdatingComboBox = false;
+            }
+        }
+
+        private void UpdateConnectionTabTitle()
+        {
+            tabConnection.Text = $"Connection-{_currentConfig.Alias}";
+        }
+
+        private void UpdateButtonStates()
+        {
+            bool hasTableList = _orchestrator != null && _orchestrator.GetTables().Count > 0;
+            bool hasFetchedData = _orchestrator != null && _orchestrator.GetTables().Any(t => t.Status == TableStatus.Fetched);
+            bool hasInsertErrors = _orchestrator != null && _orchestrator.GetTables().Any(t => t.Status == TableStatus.InsertError);
+
+            btnPrepareTableList.Enabled = !_isExecuting;
+            btnGetData.Enabled = !_isExecuting && hasTableList;
+            btnInsertData.Enabled = !_isExecuting && hasFetchedData;
+            btnInsertFailed.Enabled = !_isExecuting && hasInsertErrors;
+            btnRunAll.Enabled = !_isExecuting;
+            btnStop.Enabled = _isExecuting;
+
+            // Menu items enabled/disabled state
+            saveToolStripMenuItem.Enabled = !_isExecuting;
+            saveAsToolStripMenuItem.Enabled = !_isExecuting;
+            loadToolStripMenuItem.Enabled = !_isExecuting;
+        }
+
+        private void Log(string message)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<string>(Log), message);
+                return;
+            }
+
+            string timestamp = DateTime.Now.ToString("HH:mm:ss");
+            txtLog.AppendText($"[{timestamp}] {message}\r\n");
+        }
+
+        private void UpdateStatus(string status)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<string>(UpdateStatus), status);
+                return;
+            }
+
+            lblStatus.Text = status;
+        }
+
+        private void UpdateTablesGrid(List<TableInfo> tables)
+        {
+            if (InvokeRequired)
+            {
+                Invoke(new Action<List<TableInfo>>(UpdateTablesGrid), tables);
+                return;
+            }
+
+            _tablesBindingList.Clear();
+            foreach (var table in tables)
+            {
+                _tablesBindingList.Add(table);
+            }
+
+            UpdateSummary(tables);
+        }
+
+        private void UpdateSummary(List<TableInfo> tables)
+        {
+            int completed = tables.Count(t => t.Status == TableStatus.Inserted);
+            int failed = tables.Count(t => t.Status == TableStatus.InsertError || t.Status == TableStatus.FetchError);
+
+            if (tables.Count > 0)
+            {
+                lblSummary.Text = $"Loaded {tables.Count} tables, {completed} inserted, {failed} failed";
+            }
+            else
+            {
+                lblSummary.Text = "";
+            }
+        }
+
+        // ========== Event Handlers ==========
+
+        private void TxtAlias_TextChanged(object sender, EventArgs e)
+        {
+            UpdateConnectionTabTitle();
+        }
+
+        private void BtnSave_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                SaveConfigurationFromUI();
+                _configManager.SaveConfiguration(_currentConfig);
+                Log($"Configuration '{_currentConfig.ConfigName}' saved");
+                MessageBox.Show("Configuration saved successfully", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error saving configuration: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void BtnSaveAs_Click(object sender, EventArgs e)
+        {
+            string defaultName = txtAlias.Text;
+            string? newName = PromptForConfigName("Enter new configuration name:", defaultName);
+
+            if (!string.IsNullOrWhiteSpace(newName))
+            {
+                try
+                {
+                    SaveConfigurationFromUI();
+                    _currentConfig.ConfigName = newName;
+                    _configManager.SaveConfiguration(_currentConfig);
+                    RefreshConfigDropdown();
+                    Log($"Configuration saved as '{newName}'");
+                    MessageBox.Show($"Configuration saved as '{newName}'", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error saving configuration: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void BtnLoad_Click(object sender, EventArgs e)
+        {
+            // Only refresh if triggered by the Load menu item (not by SelectedIndexChanged)
+            bool isLoadMenuItem = sender == loadToolStripMenuItem;
+            if (isLoadMenuItem)
+            {
+                RefreshConfigDropdown();
+            }
+
+            if (cmbConfig.Items.Count == 0)
+            {
+                MessageBox.Show("No configurations available", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (cmbConfig.SelectedItem != null)
+            {
+                string configName = cmbConfig.SelectedItem.ToString()!;
+                try
+                {
+                    _currentConfig = _configManager.LoadConfiguration(configName);
+                    LoadConfigurationIntoUI();
+                    Log($"Configuration '{configName}' loaded");
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error loading configuration: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void CmbConfig_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            // Auto-load when selection changes (but not when programmatically updating)
+            if (cmbConfig.SelectedItem != null && !_isExecuting && !_isUpdatingComboBox)
+            {
+                BtnLoad_Click(sender, e);
+            }
+        }
+
+        private async void BtnPrepareTableList_Click(object sender, EventArgs e)
+        {
+            await ExecuteOperationAsync(async () =>
+            {
+                SaveConfigurationFromUI();
+                _orchestrator = new CopyOrchestrator(_currentConfig, Log);
+                _orchestrator.TablesUpdated += Orchestrator_TablesUpdated;
+                _orchestrator.StatusUpdated += Orchestrator_StatusUpdated;
+
+                await _orchestrator.PrepareTableListAsync();
+            });
+        }
+
+        private async void BtnGetData_Click(object sender, EventArgs e)
+        {
+            await ExecuteOperationAsync(async () =>
+            {
+                if (_orchestrator != null)
+                {
+                    await _orchestrator.GetDataAsync();
+                }
+            });
+        }
+
+        private async void BtnInsertData_Click(object sender, EventArgs e)
+        {
+            await ExecuteOperationAsync(async () =>
+            {
+                if (_orchestrator != null)
+                {
+                    await _orchestrator.InsertDataAsync();
+                }
+            });
+        }
+
+        private async void BtnInsertFailed_Click(object sender, EventArgs e)
+        {
+            await ExecuteOperationAsync(async () =>
+            {
+                if (_orchestrator != null)
+                {
+                    await _orchestrator.InsertFailedAsync();
+                }
+            });
+        }
+
+        private async void BtnRunAll_Click(object sender, EventArgs e)
+        {
+            await ExecuteOperationAsync(async () =>
+            {
+                SaveConfigurationFromUI();
+                _orchestrator = new CopyOrchestrator(_currentConfig, Log);
+                _orchestrator.TablesUpdated += Orchestrator_TablesUpdated;
+                _orchestrator.StatusUpdated += Orchestrator_StatusUpdated;
+
+                await _orchestrator.RunAllStagesAsync();
+            });
+        }
+
+        private void BtnStop_Click(object sender, EventArgs e)
+        {
+            _orchestrator?.Stop();
+            Log("Stop requested by user");
+        }
+
+        private void BtnClearLog_Click(object sender, EventArgs e)
+        {
+            txtLog.Clear();
+        }
+
+        private void CopyTableName_Click(object? sender, EventArgs e)
+        {
+            if (dgvTables.SelectedRows.Count > 0)
+            {
+                var selectedRow = dgvTables.SelectedRows[0];
+                var tableInfo = selectedRow.DataBoundItem as TableInfo;
+                if (tableInfo != null && !string.IsNullOrEmpty(tableInfo.TableName))
+                {
+                    Clipboard.SetText(tableInfo.TableName);
+                    Log($"Copied table name to clipboard: {tableInfo.TableName}");
+                }
+            }
+        }
+
+        private void ExitToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            Application.Exit();
+        }
+
+        private void AboutToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            var versionString = version != null ? $"{version.Major}.{version.Minor}.{version.Build}.{version.Revision}" : "1.0.0.0";
+
+            using var aboutForm = new Form
+            {
+                Text = "About",
+                Width = 400,
+                Height = 250,
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var lblTitle = new Label
+            {
+                Text = "D365FO Database Copy Tool",
+                Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+                Left = 20,
+                Top = 20,
+                Width = 350,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+
+            var lblVersion = new Label
+            {
+                Text = "Version:",
+                Left = 20,
+                Top = 60,
+                Width = 60
+            };
+
+            var txtVersion = new TextBox
+            {
+                Text = versionString,
+                Left = 85,
+                Top = 57,
+                Width = 280,
+                ReadOnly = true,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+
+            var lblCopyright = new Label
+            {
+                Text = $"Copyright © {DateTime.Now.Year} Denis Trunin",
+                Left = 20,
+                Top = 95,
+                Width = 350,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+
+            var linkGitHub = new LinkLabel
+            {
+                Text = "https://github.com/TrudAX/",
+                Left = 20,
+                Top = 125,
+                Width = 350,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            linkGitHub.LinkClicked += (s, ev) =>
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "https://github.com/TrudAX/",
+                        UseShellExecute = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Could not open link: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+
+            var btnOK = new Button
+            {
+                Text = "OK",
+                Left = 150,
+                Top = 160,
+                Width = 100,
+                DialogResult = DialogResult.OK
+            };
+
+            aboutForm.Controls.Add(lblTitle);
+            aboutForm.Controls.Add(lblVersion);
+            aboutForm.Controls.Add(txtVersion);
+            aboutForm.Controls.Add(lblCopyright);
+            aboutForm.Controls.Add(linkGitHub);
+            aboutForm.Controls.Add(btnOK);
+            aboutForm.AcceptButton = btnOK;
+
+            aboutForm.ShowDialog(this);
+        }
+
+        private void Orchestrator_TablesUpdated(object? sender, List<TableInfo> tables)
+        {
+            // Don't update immediately, let the timer handle it
+        }
+
+        private void Orchestrator_StatusUpdated(object? sender, string status)
+        {
+            UpdateStatus(status);
+        }
+
+        private void UpdateTimer_Tick(object? sender, EventArgs e)
+        {
+            if (_orchestrator != null)
+            {
+                UpdateTablesGrid(_orchestrator.GetTables());
+            }
+        }
+
+        private async Task ExecuteOperationAsync(Func<Task> operation)
+        {
+            try
+            {
+                _isExecuting = true;
+                UpdateButtonStates();
+                _updateTimer.Start();
+
+                await Task.Run(operation);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Log($"ERROR: {ex.Message}");
+            }
+            finally
+            {
+                _isExecuting = false;
+                _updateTimer.Stop();
+                UpdateButtonStates();
+
+                // Final update
+                if (_orchestrator != null)
+                {
+                    UpdateTablesGrid(_orchestrator.GetTables());
+                }
+            }
+        }
+
+        private string? PromptForConfigName(string prompt, string defaultValue)
+        {
+            using var form = new Form
+            {
+                Text = "Configuration Name",
+                Width = 400,
+                Height = 150,
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var label = new Label
+            {
+                Text = prompt,
+                Left = 20,
+                Top = 20,
+                Width = 350
+            };
+
+            var textBox = new TextBox
+            {
+                Text = defaultValue,
+                Left = 20,
+                Top = 45,
+                Width = 340
+            };
+
+            var btnOK = new Button
+            {
+                Text = "OK",
+                Left = 200,
+                Top = 75,
+                DialogResult = DialogResult.OK
+            };
+
+            var btnCancel = new Button
+            {
+                Text = "Cancel",
+                Left = 285,
+                Top = 75,
+                DialogResult = DialogResult.Cancel
+            };
+
+            form.Controls.Add(label);
+            form.Controls.Add(textBox);
+            form.Controls.Add(btnOK);
+            form.Controls.Add(btnCancel);
+            form.AcceptButton = btnOK;
+            form.CancelButton = btnCancel;
+
+            return form.ShowDialog() == DialogResult.OK ? textBox.Text : null;
+        }
+    }
+}
