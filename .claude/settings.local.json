@@ -10,7 +10,9 @@
       "Bash(dotnet nuget add source:*)",
       "Bash(dotnet restore:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)"
     ],
     "deny": [],
     "ask": []
