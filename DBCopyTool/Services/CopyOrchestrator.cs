@@ -29,7 +29,7 @@ namespace DBCopyTool.Services
         public List<TableInfo> GetTables() => _tables;
 
         /// <summary>
-        /// Stage 1: Prepare Table List
+        /// Stage 1: Discover Tables
         /// </summary>
         public async Task PrepareTableListAsync()
         {
@@ -38,7 +38,7 @@ namespace DBCopyTool.Services
 
             try
             {
-                _logger("Starting Prepare Table List...");
+                _logger("Starting Discover Tables...");
                 _tables.Clear();
 
                 // Parse and validate strategy overrides
@@ -185,7 +185,7 @@ namespace DBCopyTool.Services
             }
             catch (OperationCanceledException)
             {
-                _logger("Prepare Table List cancelled");
+                _logger("Discover Tables cancelled");
                 OnStatusUpdated("Cancelled");
             }
             catch (Exception ex)
@@ -197,7 +197,7 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
-        /// Stage 2: Get Data
+        /// Stage 2: Fetch Data
         /// </summary>
         public async Task GetDataAsync()
         {
@@ -207,7 +207,7 @@ namespace DBCopyTool.Services
             try
             {
                 _logger("─────────────────────────────────────────────");
-                _logger("Starting Get Data...");
+                _logger("Starting Fetch Data...");
 
                 var pendingTables = _tables.Where(t => t.Status == TableStatus.Pending).ToList();
                 if (pendingTables.Count == 0)
@@ -231,7 +231,7 @@ namespace DBCopyTool.Services
                         else
                             Interlocked.Increment(ref failed);
 
-                        OnStatusUpdated($"Stage 2/3: Get Data - {completed + failed}/{pendingTables.Count} tables");
+                        OnStatusUpdated($"Stage 2/3: Fetch Data - {completed + failed}/{pendingTables.Count} tables");
                     }
                     finally
                     {
@@ -247,7 +247,7 @@ namespace DBCopyTool.Services
             }
             catch (OperationCanceledException)
             {
-                _logger("Get Data cancelled");
+                _logger("Fetch Data cancelled");
                 OnStatusUpdated("Cancelled");
             }
             catch (Exception ex)
@@ -267,7 +267,7 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
-        /// Stage 4: Insert Failed (Retry)
+        /// Stage 4: Retry Failed
         /// </summary>
         public async Task InsertFailedAsync()
         {
@@ -285,7 +285,7 @@ namespace DBCopyTool.Services
             try
             {
                 _logger("─────────────────────────────────────────────");
-                string stageName = retryOnly ? "Insert Failed (Retry)" : "Insert Data";
+                string stageName = retryOnly ? "Retry Failed" : "Insert Data";
                 _logger($"Starting {stageName}...");
 
                 var tablesToInsert = retryOnly

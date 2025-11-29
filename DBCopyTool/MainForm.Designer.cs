@@ -26,6 +26,8 @@ namespace DBCopyTool
             toolStripSeparator1 = new ToolStripSeparator();
             exitToolStripMenuItem = new ToolStripMenuItem();
             helpToolStripMenuItem = new ToolStripMenuItem();
+            checkForUpdatesToolStripMenuItem = new ToolStripMenuItem();
+            toolStripSeparator2 = new ToolStripSeparator();
             aboutToolStripMenuItem = new ToolStripMenuItem();
 
             // Top configuration panel
@@ -178,10 +180,22 @@ namespace DBCopyTool
             exitToolStripMenuItem.Click += ExitToolStripMenuItem_Click;
 
             // Help Menu
-            helpToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { aboutToolStripMenuItem });
+            helpToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] {
+                checkForUpdatesToolStripMenuItem,
+                toolStripSeparator2,
+                aboutToolStripMenuItem
+            });
             helpToolStripMenuItem.Name = "helpToolStripMenuItem";
             helpToolStripMenuItem.Size = new Size(44, 20);
             helpToolStripMenuItem.Text = "&Help";
+
+            checkForUpdatesToolStripMenuItem.Name = "checkForUpdatesToolStripMenuItem";
+            checkForUpdatesToolStripMenuItem.Size = new Size(180, 22);
+            checkForUpdatesToolStripMenuItem.Text = "Check for &Updates...";
+            checkForUpdatesToolStripMenuItem.Click += CheckForUpdatesToolStripMenuItem_Click;
+
+            toolStripSeparator2.Name = "toolStripSeparator2";
+            toolStripSeparator2.Size = new Size(177, 6);
 
             aboutToolStripMenuItem.Name = "aboutToolStripMenuItem";
             aboutToolStripMenuItem.Size = new Size(180, 22);
@@ -534,13 +548,13 @@ namespace DBCopyTool
             btnPrepareTableList.Location = new Point(12, 250);
             btnPrepareTableList.Name = "btnPrepareTableList";
             btnPrepareTableList.Size = new Size(130, 30);
-            btnPrepareTableList.Text = "Prepare Table List";
+            btnPrepareTableList.Text = "Discover Tables";
             btnPrepareTableList.Click += BtnPrepareTableList_Click;
 
             btnGetData.Location = new Point(152, 250);
             btnGetData.Name = "btnGetData";
             btnGetData.Size = new Size(100, 30);
-            btnGetData.Text = "Get Data";
+            btnGetData.Text = "Fetch Data";
             btnGetData.Click += BtnGetData_Click;
 
             btnInsertData.Location = new Point(262, 250);
@@ -552,7 +566,7 @@ namespace DBCopyTool
             btnInsertFailed.Location = new Point(372, 250);
             btnInsertFailed.Name = "btnInsertFailed";
             btnInsertFailed.Size = new Size(100, 30);
-            btnInsertFailed.Text = "Insert Failed";
+            btnInsertFailed.Text = "Retry Failed";
             btnInsertFailed.Click += BtnInsertFailed_Click;
 
             btnRunAll.Location = new Point(482, 250);
@@ -677,6 +691,8 @@ namespace DBCopyTool
         private ToolStripSeparator toolStripSeparator1;
         private ToolStripMenuItem exitToolStripMenuItem;
         private ToolStripMenuItem helpToolStripMenuItem;
+        private ToolStripMenuItem checkForUpdatesToolStripMenuItem;
+        private ToolStripSeparator toolStripSeparator2;
         private ToolStripMenuItem aboutToolStripMenuItem;
 
         // Configuration Panel

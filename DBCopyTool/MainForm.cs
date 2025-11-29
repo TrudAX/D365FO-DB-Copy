@@ -676,6 +676,109 @@ namespace DBCopyTool
             Application.Exit();
         }
 
+        private async void CheckForUpdatesToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            // Disable menu item during check
+            checkForUpdatesToolStripMenuItem.Enabled = false;
+
+            try
+            {
+                // Update status
+                UpdateStatus("Checking for updates...");
+
+                var result = await UpdateChecker.CheckForUpdatesAsync();
+
+                if (!result.Success)
+                {
+                    // Error occurred
+                    ShowUpdateCheckError(result.ErrorMessage ?? "Unknown error");
+                    return;
+                }
+
+                if (result.UpdateAvailable)
+                {
+                    // New version available
+                    ShowUpdateAvailableDialog(result);
+                }
+                else
+                {
+                    // Up to date
+                    ShowUpToDateDialog(result);
+                }
+            }
+            finally
+            {
+                checkForUpdatesToolStripMenuItem.Enabled = true;
+                UpdateStatus("Ready");
+            }
+        }
+
+        private void ShowUpdateAvailableDialog(UpdateChecker.UpdateCheckResult result)
+        {
+            var message = $"A new version is available!\n\n" +
+                          $"Current version:  {result.CurrentVersion}\n" +
+                          $"Latest version:   {result.LatestVersion}\n\n" +
+                          $"Would you like to open the download page?";
+
+            var dialogResult = MessageBox.Show(
+                message,
+                "Update Available",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information);
+
+            if (dialogResult == DialogResult.Yes)
+            {
+                // Open release page in default browser
+                var url = result.ReleaseUrl ?? UpdateChecker.GetReleasesPageUrl();
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = url,
+                        UseShellExecute = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Could not open browser: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void ShowUpToDateDialog(UpdateChecker.UpdateCheckResult result)
+        {
+            MessageBox.Show(
+                $"You're up to date!\n\nCurrent version: {result.CurrentVersion}",
+                "Check for Updates",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+
+        private void ShowUpdateCheckError(string errorMessage)
+        {
+            var dialogResult = MessageBox.Show(
+                $"Could not check for updates.\n\n{errorMessage}\n\nWould you like to open the releases page manually?",
+                "Check for Updates",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (dialogResult == DialogResult.Yes)
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = UpdateChecker.GetReleasesPageUrl(),
+                        UseShellExecute = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Could not open browser: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
         private void AboutToolStripMenuItem_Click(object sender, EventArgs e)
         {
             var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;

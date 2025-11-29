@@ -10,6 +10,11 @@ x86/
 bld/
 [Oo]ut/
 
+# Publish/Release artifacts
+publish/
+release-package/
+*.zip
+
 # Visual Studio
 .vs/
 *.user

@@ -107,15 +107,15 @@ VENDTABLE|5000 -truncate                    # Force truncate before insert
 2. **Configure Exclusions**: Set System Excluded Tables (Connection tab) and user exclusions (Tables tab)
 3. **Select Tables**: Define inclusion/exclusion patterns
 4. **Define Strategies**: Specify per-table copy strategies with optional WHERE clauses
-5. **Prepare Table List**: Discovers tables and validates schemas
-6. **Get Data**: Fetches data from Tier2 in parallel
+5. **Discover Tables**: Discovers tables and validates schemas
+6. **Fetch Data**: Fetches data from Tier2 in parallel
 7. **Insert Data**: Inserts fetched data into AxDB in parallel
 
 Or use **Run All** to execute all steps sequentially.
 
 ### Get SQL Feature
 
-Right-click on any table in the grid after "Prepare Table List" to generate formatted SQL showing:
+Right-click on any table in the grid after "Discover Tables" to generate formatted SQL showing:
 - Source query (Tier2)
 - Cleanup queries (AxDB) - step by step
 - Insert operation details

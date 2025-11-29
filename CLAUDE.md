@@ -48,8 +48,8 @@ Version format: `1.0.YYYY.DayOfYear` (auto-increments with each build using MSBu
 
 ### Data Flow (Three Stages)
 
-1. **Prepare Table List**: Discovers tables from Tier2, applies inclusion/exclusion patterns, validates schemas against AxDB, generates fetch SQL for each table
-2. **Get Data**: Fetches data from Tier2 in parallel using configurable connection pool (default: 10 connections)
+1. **Discover Tables**: Discovers tables from Tier2, applies inclusion/exclusion patterns, validates schemas against AxDB, generates fetch SQL for each table
+2. **Fetch Data**: Fetches data from Tier2 in parallel using configurable connection pool (default: 10 connections)
 3. **Insert Data**: Inserts into AxDB in parallel with automatic cleanup, trigger management, and sequence updates
 
 ### Copy Strategy System
@@ -104,7 +104,7 @@ Critical optimization in `Models/SqlDictionaryCache.cs`:
 **MODIFIEDDATETIME Field**
 - Standard D365FO audit field tracking last modification
 - Required for ModifiedDate strategies
-- Not all tables have this field (validation occurs in PrepareTableList)
+- Not all tables have this field (validation occurs in Discover Tables stage)
 - Used to calculate cutoff date: Current UTC datetime minus configured days
 
 **Sequence Management**
@@ -170,7 +170,7 @@ This ensures clean data replacement without orphaned records. The multi-step app
 - Separate from user-defined exclusions
 - Default exclusions: `SQL*`, `UserInfo`, `Sys*`, `Batch*`, `RetailCDX*`, `RETAILHARDWAREPROFILE`
 - Managed on Connection tab with "Init" button to reset to defaults
-- Combined with user exclusions during table filtering in PrepareTableList
+- Combined with user exclusions during table filtering in Discover Tables stage
 
 ## Development Notes
 

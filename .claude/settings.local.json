@@ -12,7 +12,10 @@
       "Bash(git init:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git branch:*)"
+      "Bash(git branch:*)",
+      "Bash(dotnet publish:*)",
+      "Bash(powershell -Command \"(Get-Item DBCopyTool.exe).VersionInfo | Select-Object FileVersion, ProductVersion | Format-List\")",
+      "Bash(git check-ignore:*)"
     ],
     "deny": [],
     "ask": []
