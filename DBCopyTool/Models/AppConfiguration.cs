@@ -24,7 +24,8 @@ namespace DBCopyTool.Models
         };
 
         public string TablesToInclude { get; set; } = "*";
-        public string TablesToExclude { get; set; } = "Sys*\r\nBatch*\r\n*Staging";
+        public string TablesToExclude { get; set; } = "*Staging";
+        public string SystemExcludedTables { get; set; } = "";
         public string FieldsToExclude { get; set; } = "SYSROWVERSION";
 
         public int DefaultRecordCount { get; set; } = 10000;

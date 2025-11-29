@@ -88,6 +88,10 @@ namespace DBCopyTool
             lblParallelInsert = new Label();
             nudParallelInsert = new NumericUpDown();
 
+            lblSystemExcludedTables = new Label();
+            txtSystemExcludedTables = new TextBox();
+            btnInitSystemExcludedTables = new Button();
+
             // Action buttons
             btnPrepareTableList = new Button();
             btnGetData = new Button();
@@ -184,7 +188,7 @@ namespace DBCopyTool
             aboutToolStripMenuItem.Text = "&About...";
             aboutToolStripMenuItem.Click += AboutToolStripMenuItem_Click;
 
-            // Configuration Panel (Top)
+            // Configuration Panel (Top, outside tabs)
             lblConfig.AutoSize = true;
             lblConfig.Location = new Point(12, 32);
             lblConfig.Name = "lblConfig";
@@ -197,24 +201,34 @@ namespace DBCopyTool
             cmbConfig.Size = new Size(250, 23);
             cmbConfig.SelectedIndexChanged += CmbConfig_SelectedIndexChanged;
 
-            // TabControl (wider to accommodate form size)
+            // TabControl (fills form below config)
             tabControl.Controls.Add(tabTables);
             tabControl.Controls.Add(tabConnection);
-            tabControl.Location = new Point(12, 60);
+            tabControl.Location = new Point(0, 60);
             tabControl.Name = "tabControl";
             tabControl.SelectedIndex = 0;
-            tabControl.Size = new Size(1395, 250);
-            tabControl.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            tabControl.Size = new Size(1421, 832);
+            tabControl.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
-            // Tables Tab - 4 Column Layout
+            // Tables Tab - includes all controls except Config
             tabTables.Controls.Add(grpCol1);
             tabTables.Controls.Add(grpCol2);
             tabTables.Controls.Add(grpCol3);
             tabTables.Controls.Add(grpCol4);
+            tabTables.Controls.Add(btnPrepareTableList);
+            tabTables.Controls.Add(btnGetData);
+            tabTables.Controls.Add(btnInsertData);
+            tabTables.Controls.Add(btnInsertFailed);
+            tabTables.Controls.Add(btnRunAll);
+            tabTables.Controls.Add(btnStop);
+            tabTables.Controls.Add(lblStatus);
+            tabTables.Controls.Add(dgvTables);
+            tabTables.Controls.Add(lblSummary);
+            tabTables.Controls.Add(grpLog);
             tabTables.Location = new Point(4, 24);
             tabTables.Name = "tabTables";
             tabTables.Padding = new Padding(3);
-            tabTables.Size = new Size(1387, 222);
+            tabTables.Size = new Size(1413, 804);
             tabTables.Text = "Tables";
             tabTables.UseVisualStyleBackColor = true;
 
@@ -339,10 +353,13 @@ namespace DBCopyTool
             tabConnection.Controls.Add(nudParallelFetch);
             tabConnection.Controls.Add(lblParallelInsert);
             tabConnection.Controls.Add(nudParallelInsert);
+            tabConnection.Controls.Add(lblSystemExcludedTables);
+            tabConnection.Controls.Add(txtSystemExcludedTables);
+            tabConnection.Controls.Add(btnInitSystemExcludedTables);
             tabConnection.Location = new Point(4, 24);
             tabConnection.Name = "tabConnection";
             tabConnection.Padding = new Padding(3);
-            tabConnection.Size = new Size(1387, 222);
+            tabConnection.Size = new Size(1413, 804);
             tabConnection.Text = "Connection";
             tabConnection.UseVisualStyleBackColor = true;
 
@@ -480,82 +497,101 @@ namespace DBCopyTool
             nudParallelInsert.Size = new Size(80, 23);
             nudParallelInsert.Value = 10;
 
-            // Action Buttons
-            btnPrepareTableList.Location = new Point(12, 320);
+            // System Excluded Tables
+            lblSystemExcludedTables.AutoSize = true;
+            lblSystemExcludedTables.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblSystemExcludedTables.Location = new Point(10, 225);
+            lblSystemExcludedTables.Text = "System Excluded Tables";
+
+            txtSystemExcludedTables.Location = new Point(10, 250);
+            txtSystemExcludedTables.Multiline = true;
+            txtSystemExcludedTables.Name = "txtSystemExcludedTables";
+            txtSystemExcludedTables.ScrollBars = ScrollBars.Vertical;
+            txtSystemExcludedTables.Size = new Size(400, 200);
+            txtSystemExcludedTables.Font = new Font("Consolas", 9F);
+
+            btnInitSystemExcludedTables.Location = new Point(420, 250);
+            btnInitSystemExcludedTables.Name = "btnInitSystemExcludedTables";
+            btnInitSystemExcludedTables.Size = new Size(80, 30);
+            btnInitSystemExcludedTables.Text = "Init";
+            btnInitSystemExcludedTables.Click += BtnInitSystemExcludedTables_Click;
+
+            // Action Buttons (in Tables tab)
+            btnPrepareTableList.Location = new Point(12, 250);
             btnPrepareTableList.Name = "btnPrepareTableList";
             btnPrepareTableList.Size = new Size(130, 30);
             btnPrepareTableList.Text = "Prepare Table List";
             btnPrepareTableList.Click += BtnPrepareTableList_Click;
 
-            btnGetData.Location = new Point(152, 320);
+            btnGetData.Location = new Point(152, 250);
             btnGetData.Name = "btnGetData";
             btnGetData.Size = new Size(100, 30);
             btnGetData.Text = "Get Data";
             btnGetData.Click += BtnGetData_Click;
 
-            btnInsertData.Location = new Point(262, 320);
+            btnInsertData.Location = new Point(262, 250);
             btnInsertData.Name = "btnInsertData";
             btnInsertData.Size = new Size(100, 30);
             btnInsertData.Text = "Insert Data";
             btnInsertData.Click += BtnInsertData_Click;
 
-            btnInsertFailed.Location = new Point(372, 320);
+            btnInsertFailed.Location = new Point(372, 250);
             btnInsertFailed.Name = "btnInsertFailed";
             btnInsertFailed.Size = new Size(100, 30);
             btnInsertFailed.Text = "Insert Failed";
             btnInsertFailed.Click += BtnInsertFailed_Click;
 
-            btnRunAll.Location = new Point(482, 320);
+            btnRunAll.Location = new Point(482, 250);
             btnRunAll.Name = "btnRunAll";
             btnRunAll.Size = new Size(100, 30);
             btnRunAll.Text = "Run All";
             btnRunAll.Click += BtnRunAll_Click;
 
-            btnStop.Location = new Point(592, 320);
+            btnStop.Location = new Point(592, 250);
             btnStop.Name = "btnStop";
             btnStop.Size = new Size(100, 30);
             btnStop.Text = "Stop";
             btnStop.Enabled = false;
             btnStop.Click += BtnStop_Click;
 
-            // Status Label
+            // Status Label (in Tables tab)
             lblStatus.AutoSize = true;
-            lblStatus.Location = new Point(12, 360);
+            lblStatus.Location = new Point(12, 290);
             lblStatus.Name = "lblStatus";
             lblStatus.Size = new Size(50, 15);
             lblStatus.Text = "Ready";
             lblStatus.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
-            // Data Grid (taller to accommodate form size)
+            // Data Grid (in Tables tab)
             dgvTables.AllowUserToAddRows = false;
             dgvTables.AllowUserToDeleteRows = false;
             dgvTables.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells;
-            dgvTables.Location = new Point(12, 385);
+            dgvTables.Location = new Point(12, 315);
             dgvTables.Name = "dgvTables";
             dgvTables.ReadOnly = true;
             dgvTables.RowHeadersVisible = false;
             dgvTables.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            dgvTables.Size = new Size(1395, 300);
+            dgvTables.Size = new Size(1360, 300);
             dgvTables.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
 
-            // Summary Label
+            // Summary Label (in Tables tab)
             lblSummary.AutoSize = true;
-            lblSummary.Location = new Point(12, 690);
+            lblSummary.Location = new Point(12, 623);
             lblSummary.Name = "lblSummary";
             lblSummary.Size = new Size(0, 15);
             lblSummary.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
 
-            // Log Panel (6 lines visible, Clear button on right as small icon)
+            // Log Panel (in Tables tab)
             grpLog.Controls.Add(btnClearLog);
             grpLog.Controls.Add(txtLog);
-            grpLog.Location = new Point(12, 715);
+            grpLog.Location = new Point(12, 645);
             grpLog.Name = "grpLog";
-            grpLog.Size = new Size(1395, 150);
+            grpLog.Size = new Size(1360, 145);
             grpLog.Text = "Log";
             grpLog.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
             // Clear button - small, on the right
-            btnClearLog.Location = new Point(1355, 20);
+            btnClearLog.Location = new Point(1320, 20);
             btnClearLog.Name = "btnClearLog";
             btnClearLog.Size = new Size(30, 25);
             btnClearLog.Text = "×";
@@ -566,36 +602,26 @@ namespace DBCopyTool
             ToolTip clearTooltip = new ToolTip();
             clearTooltip.SetToolTip(btnClearLog, "Clear Log");
 
-            // Log text box - 6 lines visible
+            // Log text box
             txtLog.Location = new Point(10, 20);
             txtLog.Multiline = true;
             txtLog.Name = "txtLog";
             txtLog.ReadOnly = true;
             txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.Size = new Size(1340, 120);
+            txtLog.Size = new Size(1305, 115);
             txtLog.Font = new Font("Consolas", 9F);
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
-            // MainForm - 20% larger
+            // MainForm
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1421, 892);
             Controls.Add(lblConfig);
             Controls.Add(cmbConfig);
             Controls.Add(tabControl);
-            Controls.Add(btnPrepareTableList);
-            Controls.Add(btnGetData);
-            Controls.Add(btnInsertData);
-            Controls.Add(btnInsertFailed);
-            Controls.Add(btnRunAll);
-            Controls.Add(btnStop);
-            Controls.Add(lblStatus);
-            Controls.Add(dgvTables);
-            Controls.Add(lblSummary);
-            Controls.Add(grpLog);
             Controls.Add(menuStrip);
             MainMenuStrip = menuStrip;
-            MinimumSize = new Size(1437, 931);
+            MinimumSize = new Size(1437, 650);
             Name = "MainForm";
             StartPosition = FormStartPosition.CenterScreen;
             Text = "D365FO Database Copy Tool";
@@ -697,6 +723,10 @@ namespace DBCopyTool
         private NumericUpDown nudParallelFetch;
         private Label lblParallelInsert;
         private NumericUpDown nudParallelInsert;
+
+        private Label lblSystemExcludedTables;
+        private TextBox txtSystemExcludedTables;
+        private Button btnInitSystemExcludedTables;
 
         // Action Buttons
         private Button btnPrepareTableList;

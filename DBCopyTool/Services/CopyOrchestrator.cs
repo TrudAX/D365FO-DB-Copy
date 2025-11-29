@@ -58,7 +58,11 @@ namespace DBCopyTool.Services
 
                 // Get inclusion and exclusion patterns
                 var inclusionPatterns = GetPatterns(_config.TablesToInclude);
-                var exclusionPatterns = GetPatterns(_config.TablesToExclude);
+
+                // Combine TablesToExclude and SystemExcludedTables
+                var combinedExclusions = CombineExclusionPatterns(_config.TablesToExclude, _config.SystemExcludedTables);
+                var exclusionPatterns = GetPatterns(combinedExclusions);
+
                 var excludedFields = GetExcludedFieldsMap(_config.FieldsToExclude);
 
                 int skipped = 0;
@@ -491,6 +495,20 @@ namespace DBCopyTool.Services
                 return strategy;
 
             return (CopyStrategyType.RecId, _config.DefaultRecordCount);
+        }
+
+        private string CombineExclusionPatterns(string tablesToExclude, string systemExcludedTables)
+        {
+            // Combine both exclusion lists
+            var combined = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(tablesToExclude))
+                combined.Add(tablesToExclude.Trim());
+
+            if (!string.IsNullOrWhiteSpace(systemExcludedTables))
+                combined.Add(systemExcludedTables.Trim());
+
+            return string.Join("\r\n", combined);
         }
 
         private List<string> GetPatterns(string input)

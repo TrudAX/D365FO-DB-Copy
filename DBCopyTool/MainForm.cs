@@ -189,6 +189,8 @@ namespace DBCopyTool
             nudParallelFetch.Value = _currentConfig.ParallelFetchConnections;
             nudParallelInsert.Value = _currentConfig.ParallelInsertConnections;
 
+            txtSystemExcludedTables.Text = _currentConfig.SystemExcludedTables;
+
             // Tables tab
             txtTablesToInclude.Text = _currentConfig.TablesToInclude;
             txtTablesToExclude.Text = _currentConfig.TablesToExclude;
@@ -197,6 +199,12 @@ namespace DBCopyTool
             txtStrategyOverrides.Text = _currentConfig.StrategyOverrides;
 
             UpdateConnectionTabTitle();
+
+            // Initialize system excluded tables if empty (new configuration)
+            if (string.IsNullOrWhiteSpace(_currentConfig.SystemExcludedTables))
+            {
+                InitializeSystemExcludedTables();
+            }
         }
 
         private void SaveConfigurationFromUI()
@@ -215,6 +223,8 @@ namespace DBCopyTool
 
             _currentConfig.ParallelFetchConnections = (int)nudParallelFetch.Value;
             _currentConfig.ParallelInsertConnections = (int)nudParallelInsert.Value;
+
+            _currentConfig.SystemExcludedTables = txtSystemExcludedTables.Text;
 
             _currentConfig.TablesToInclude = txtTablesToInclude.Text;
             _currentConfig.TablesToExclude = txtTablesToExclude.Text;
@@ -641,6 +651,28 @@ namespace DBCopyTool
                     UpdateTablesGrid(_orchestrator.GetTables());
                 }
             }
+        }
+
+        private void InitializeSystemExcludedTables()
+        {
+            string defaultSystemExclusions = string.Join("\r\n", new[]
+            {
+                "SQL*",
+                "UserInfo",
+                "Sys*",
+                "Batch*",
+                "RetailCDX*",
+                "RETAILHARDWAREPROFILE"
+            });
+
+            txtSystemExcludedTables.Text = defaultSystemExclusions;
+            _currentConfig.SystemExcludedTables = defaultSystemExclusions;
+        }
+
+        private void BtnInitSystemExcludedTables_Click(object sender, EventArgs e)
+        {
+            InitializeSystemExcludedTables();
+            Log("System excluded tables initialized with default values");
         }
 
         private string? PromptForConfigName(string prompt, string defaultValue)
