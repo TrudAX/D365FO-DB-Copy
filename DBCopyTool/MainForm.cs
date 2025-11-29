@@ -39,6 +39,9 @@ namespace DBCopyTool
             // Enable sorting for all columns
             dgvTables.AllowUserToOrderColumns = true;
 
+            // Add column header click event for sorting
+            dgvTables.ColumnHeaderMouseClick += DgvTables_ColumnHeaderMouseClick;
+
             // Add context menu for copying table name and getting SQL
             var contextMenu = new ContextMenuStrip();
 
@@ -892,6 +895,128 @@ namespace DBCopyTool
             form.CancelButton = btnCancel;
 
             return form.ShowDialog() == DialogResult.OK ? textBox.Text : null;
+        }
+
+        private ListSortDirection _lastSortDirection = ListSortDirection.Ascending;
+        private string _lastSortColumn = "TableName";
+
+        private void DgvTables_ColumnHeaderMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.ColumnIndex < 0 || _tablesBindingList.Count == 0)
+                return;
+
+            var column = dgvTables.Columns[e.ColumnIndex];
+            var columnName = column.DataPropertyName;
+
+            if (string.IsNullOrEmpty(columnName))
+                return;
+
+            // Toggle sort direction if clicking same column, otherwise use ascending
+            if (_lastSortColumn == columnName)
+            {
+                _lastSortDirection = _lastSortDirection == ListSortDirection.Ascending
+                    ? ListSortDirection.Descending
+                    : ListSortDirection.Ascending;
+            }
+            else
+            {
+                _lastSortDirection = ListSortDirection.Ascending;
+                _lastSortColumn = columnName;
+            }
+
+            // Sort the binding list
+            SortBindingList(columnName, _lastSortDirection);
+
+            // Update column header to show sort indicator
+            foreach (DataGridViewColumn col in dgvTables.Columns)
+            {
+                col.HeaderCell.SortGlyphDirection = SortOrder.None;
+            }
+
+            column.HeaderCell.SortGlyphDirection = _lastSortDirection == ListSortDirection.Ascending
+                ? SortOrder.Ascending
+                : SortOrder.Descending;
+        }
+
+        private void SortBindingList(string propertyName, ListSortDirection direction)
+        {
+            var items = _tablesBindingList.ToList();
+
+            // Sort based on property name
+            IOrderedEnumerable<TableInfo> sortedItems;
+
+            switch (propertyName)
+            {
+                case "TableName":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.TableName)
+                        : items.OrderByDescending(x => x.TableName);
+                    break;
+                case "TableId":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.TableId)
+                        : items.OrderByDescending(x => x.TableId);
+                    break;
+                case "StrategyDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.StrategyDisplay)
+                        : items.OrderByDescending(x => x.StrategyDisplay);
+                    break;
+                case "Tier2RowCountDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.Tier2RowCount)
+                        : items.OrderByDescending(x => x.Tier2RowCount);
+                    break;
+                case "Tier2SizeGBDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.Tier2SizeGB)
+                        : items.OrderByDescending(x => x.Tier2SizeGB);
+                    break;
+                case "Status":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.Status)
+                        : items.OrderByDescending(x => x.Status);
+                    break;
+                case "RecordsFetched":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.RecordsFetched)
+                        : items.OrderByDescending(x => x.RecordsFetched);
+                    break;
+                case "MinRecId":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.MinRecId)
+                        : items.OrderByDescending(x => x.MinRecId);
+                    break;
+                case "FetchTimeDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.FetchTimeSeconds)
+                        : items.OrderByDescending(x => x.FetchTimeSeconds);
+                    break;
+                case "InsertTimeDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.InsertTimeSeconds)
+                        : items.OrderByDescending(x => x.InsertTimeSeconds);
+                    break;
+                case "Error":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.Error)
+                        : items.OrderByDescending(x => x.Error);
+                    break;
+                default:
+                    return; // Unknown property, don't sort
+            }
+
+            // Clear and refill the binding list
+            _tablesBindingList.RaiseListChangedEvents = false;
+            _tablesBindingList.Clear();
+
+            foreach (var item in sortedItems)
+            {
+                _tablesBindingList.Add(item);
+            }
+
+            _tablesBindingList.RaiseListChangedEvents = true;
+            _tablesBindingList.ResetBindings();
         }
     }
 }
