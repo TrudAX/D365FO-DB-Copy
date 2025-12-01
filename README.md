@@ -6,7 +6,7 @@ A WinForms .NET 9 application for copying data from Dynamics 365 Finance & Opera
 
 This tool helps developers synchronize data from D365FO cloud environments to their local development databases, making it easier to test with production-like data.
 
-![](assets/MainDialog.png)
+![](Assets/MainDialog.png)
 
 ## Features
 
