@@ -168,7 +168,7 @@ This ensures clean data replacement without orphaned records. The multi-step app
 
 **System Excluded Tables**
 - Separate from user-defined exclusions
-- Default exclusions: `SQL*`, `UserInfo`, `Sys*`, `Batch*`, `RetailCDX*`, `RETAILHARDWAREPROFILE`
+- Default exclusions: `SQL*`, `UserInfo`, `Sys*`, `Batch*`, `RetailCDX*`, `RETAILHARDWAREPROFILE`, `AIFCHANGETRACKINGDELETEDOBJECT`, `LICENSINGUSEREFFECTIVEROLES`, `TIMEZONEINFO`, `FORMRUN*`
 - Managed on Connection tab with "Init" button to reset to defaults
 - Combined with user exclusions during table filtering in Discover Tables stage
 

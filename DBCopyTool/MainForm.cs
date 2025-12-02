@@ -963,7 +963,11 @@ namespace DBCopyTool
                 "Sys*",
                 "Batch*",
                 "RetailCDX*",
-                "RETAILHARDWAREPROFILE"
+                "RETAILHARDWAREPROFILE",
+                "AIFCHANGETRACKINGDELETEDOBJECT",
+                "LICENSINGUSEREFFECTIVEROLES",
+                "TIMEZONEINFO",
+                "FORMRUN*"
             });
 
             txtSystemExcludedTables.Text = defaultSystemExclusions;
