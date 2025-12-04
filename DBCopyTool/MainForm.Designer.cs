@@ -96,6 +96,7 @@ namespace DBCopyTool
             btnPrepareTableList = new Button();
             btnProcessTables = new Button();
             btnRetryFailed = new Button();
+            btnProcessSelected = new Button();
             btnRunAll = new Button();
             btnStop = new Button();
 
@@ -228,6 +229,7 @@ namespace DBCopyTool
             tabTables.Controls.Add(btnPrepareTableList);
             tabTables.Controls.Add(btnProcessTables);
             tabTables.Controls.Add(btnRetryFailed);
+            tabTables.Controls.Add(btnProcessSelected);
             tabTables.Controls.Add(btnRunAll);
             tabTables.Controls.Add(btnStop);
             tabTables.Controls.Add(lblStatus);
@@ -545,13 +547,19 @@ namespace DBCopyTool
             btnRetryFailed.Text = "Retry Failed";
             btnRetryFailed.Click += BtnRetryFailed_Click;
 
-            btnRunAll.Location = new Point(392, 250);
+            btnProcessSelected.Location = new Point(392, 250);
+            btnProcessSelected.Name = "btnProcessSelected";
+            btnProcessSelected.Size = new Size(120, 30);
+            btnProcessSelected.Text = "Process Selected";
+            btnProcessSelected.Click += BtnProcessSelected_Click;
+
+            btnRunAll.Location = new Point(522, 250);
             btnRunAll.Name = "btnRunAll";
             btnRunAll.Size = new Size(100, 30);
             btnRunAll.Text = "Run All";
             btnRunAll.Click += BtnRunAll_Click;
 
-            btnStop.Location = new Point(502, 250);
+            btnStop.Location = new Point(632, 250);
             btnStop.Name = "btnStop";
             btnStop.Size = new Size(100, 30);
             btnStop.Text = "Stop";
@@ -577,6 +585,7 @@ namespace DBCopyTool
             dgvTables.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             dgvTables.Size = new Size(1360, 300);
             dgvTables.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+            dgvTables.SelectionChanged += DgvTables_SelectionChanged;
 
             // Summary Label (in Tables tab)
             lblSummary.AutoSize = true;
@@ -735,6 +744,7 @@ namespace DBCopyTool
         private Button btnPrepareTableList;
         private Button btnProcessTables;
         private Button btnRetryFailed;
+        private Button btnProcessSelected;
         private Button btnRunAll;
         private Button btnStop;
 

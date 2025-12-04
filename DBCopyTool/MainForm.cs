@@ -287,10 +287,12 @@ namespace DBCopyTool
             bool hasFailedTables = _orchestrator != null &&
                 _orchestrator.GetTables().Any(t => t.Status == TableStatus.FetchError ||
                                                   t.Status == TableStatus.InsertError);
+            bool hasSelection = dgvTables.SelectedRows.Count > 0;
 
             btnPrepareTableList.Enabled = !_isExecuting;
             btnProcessTables.Enabled = !_isExecuting && hasPendingTables;
             btnRetryFailed.Enabled = !_isExecuting && hasFailedTables;
+            btnProcessSelected.Enabled = !_isExecuting && hasSelection && _orchestrator != null;
             btnRunAll.Enabled = !_isExecuting;
             btnStop.Enabled = _isExecuting;
 
@@ -475,6 +477,34 @@ namespace DBCopyTool
             });
         }
 
+        private async void BtnProcessSelected_Click(object sender, EventArgs e)
+        {
+            if (dgvTables.SelectedRows.Count == 0)
+            {
+                MessageBox.Show("Please select a table to process", "No Selection",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var selectedRow = dgvTables.SelectedRows[0];
+            var tableInfo = selectedRow.DataBoundItem as TableInfo;
+
+            if (tableInfo == null)
+            {
+                return;
+            }
+
+            await ExecuteOperationAsync(async () =>
+            {
+                if (_orchestrator != null)
+                {
+                    // Save current configuration from UI to apply latest strategy settings
+                    SaveConfigurationFromUI();
+                    await _orchestrator.ProcessSingleTableByNameAsync(tableInfo.TableName);
+                }
+            });
+        }
+
         private async void BtnRunAll_Click(object sender, EventArgs e)
         {
             await ExecuteOperationAsync(async () =>
@@ -497,6 +527,11 @@ namespace DBCopyTool
         private void BtnClearLog_Click(object sender, EventArgs e)
         {
             txtLog.Clear();
+        }
+
+        private void DgvTables_SelectionChanged(object? sender, EventArgs e)
+        {
+            UpdateButtonStates();
         }
 
         private void CopyTableName_Click(object? sender, EventArgs e)

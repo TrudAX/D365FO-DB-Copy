@@ -363,6 +363,141 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
+        /// Re-apply copy strategy for a single table from current configuration
+        /// </summary>
+        private void ReapplyStrategyForTable(TableInfo table)
+        {
+            // Parse strategy overrides from current config
+            var strategyOverrides = ParseStrategyOverrides(_config.StrategyOverrides);
+
+            // Get the strategy for this table
+            var strategy = GetStrategy(table.TableName, strategyOverrides);
+
+            // Verify ModifiedDate strategy requirements
+            if (strategy.StrategyType == CopyStrategyType.ModifiedDate ||
+                strategy.StrategyType == CopyStrategyType.ModifiedDateWithWhere)
+            {
+                if (!table.CopyableFields.Any(f => f.Equals("MODIFIEDDATETIME", StringComparison.OrdinalIgnoreCase)))
+                {
+                    table.Status = TableStatus.FetchError;
+                    table.Error = "MODIFIEDDATETIME column not found for ModifiedDate strategy";
+                    _logger($"Table {table.TableName} configured for ModifiedDate strategy but lacks MODIFIEDDATETIME column");
+                    return;
+                }
+            }
+
+            // Regenerate fetch SQL with new strategy
+            string fetchSql = GenerateFetchSql(table.TableName, table.CopyableFields, strategy);
+
+            // Calculate records to copy based on strategy
+            long recordsToCopy = strategy.StrategyType switch
+            {
+                CopyStrategyType.RecId or CopyStrategyType.RecIdWithWhere => strategy.RecIdCount ?? 0,
+                CopyStrategyType.All => table.Tier2RowCount,
+                _ => table.Tier2RowCount  // For ModifiedDate/Where, use Tier2RowCount as rough estimate
+            };
+
+            // Calculate estimated size in MB using minimum of RecordsToCopy and Tier2RowCount
+            long recordsForCalculation = Math.Min(recordsToCopy, table.Tier2RowCount);
+            decimal estimatedSizeMB = table.BytesPerRow > 0 && recordsForCalculation > 0
+                ? (decimal)table.BytesPerRow * recordsForCalculation / 1_000_000m
+                : 0;
+
+            // Update table with new strategy
+            table.StrategyType = strategy.StrategyType;
+            table.StrategyValue = strategy.RecIdCount ?? strategy.DaysCount ?? 0;  // Backward compatibility
+            table.RecIdCount = strategy.RecIdCount;
+            table.DaysCount = strategy.DaysCount;
+            table.WhereClause = strategy.WhereClause;
+            table.UseTruncate = strategy.UseTruncate;
+            table.RecordsToCopy = recordsToCopy;
+            table.EstimatedSizeMB = estimatedSizeMB;
+            table.FetchSql = fetchSql;
+
+            _logger($"Re-applied strategy for {table.TableName}: {table.StrategyDisplay}");
+        }
+
+        /// <summary>
+        /// Process a single table by name (runs independently without semaphore)
+        /// </summary>
+        public async Task ProcessSingleTableByNameAsync(string tableName)
+        {
+            var table = _tables.FirstOrDefault(t =>
+                t.TableName.Equals(tableName, StringComparison.OrdinalIgnoreCase));
+
+            if (table == null)
+            {
+                _logger($"Table {tableName} not found");
+                return;
+            }
+
+            // Skip if table is currently being processed
+            if (table.Status == TableStatus.Fetching || table.Status == TableStatus.Inserting)
+            {
+                _logger($"Table {tableName} is currently being processed");
+                return;
+            }
+
+            // Reset table state for re-processing
+            table.Status = TableStatus.Pending;
+            table.Error = string.Empty;
+            table.CachedData = null;
+            table.RecordsFetched = 0;
+            table.FetchTimeSeconds = 0;
+            table.InsertTimeSeconds = 0;
+            table.MinRecId = 0;
+
+            // Re-apply strategy from current configuration
+            ReapplyStrategyForTable(table);
+
+            // Check if strategy re-application resulted in an error
+            if (table.Status == TableStatus.FetchError)
+            {
+                OnTablesUpdated();
+                return;
+            }
+
+            OnTablesUpdated();
+
+            _cancellationTokenSource = new CancellationTokenSource();
+            var cancellationToken = _cancellationTokenSource.Token;
+
+            try
+            {
+                _logger($"─────────────────────────────────────────────");
+                _logger($"Processing single table: {tableName}");
+
+                await ProcessSingleTableAsync(table, cancellationToken);
+
+                if (table.Status == TableStatus.Inserted)
+                {
+                    _logger($"Table {tableName} processed successfully");
+                    OnStatusUpdated($"Completed: {tableName}");
+                }
+                else
+                {
+                    _logger($"Table {tableName} processing failed");
+                    OnStatusUpdated($"Failed: {tableName}");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                _logger($"Processing of {tableName} cancelled");
+                OnStatusUpdated("Cancelled");
+            }
+            catch (Exception ex)
+            {
+                _logger($"ERROR processing {tableName}: {ex.Message}");
+                OnStatusUpdated($"Error: {ex.Message}");
+                throw;
+            }
+            finally
+            {
+                OnTablesUpdated();
+            }
+        }
+
+        /// <summary>
         /// Process a single table: fetch → insert → clear memory
         /// </summary>
         private async Task ProcessSingleTableAsync(TableInfo table, CancellationToken cancellationToken)
