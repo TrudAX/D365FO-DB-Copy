@@ -603,7 +603,7 @@ namespace DBCopyTool
                                 "DeleteTimeDisplay" => table.DeleteTimeDisplay,
                                 "InsertTimeDisplay" => table.InsertTimeDisplay,
                                 "Status" => table.Status.ToString(),
-                                "Error" => table.Error,
+                                "Error" => table.Error.Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ").Replace("\t", " "),
                                 _ => ""
                             };
                             values.Add(value);
