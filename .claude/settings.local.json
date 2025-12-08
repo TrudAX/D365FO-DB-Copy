@@ -16,7 +16,8 @@
       "Bash(dotnet publish:*)",
       "Bash(powershell -Command \"(Get-Item DBCopyTool.exe).VersionInfo | Select-Object FileVersion, ProductVersion | Format-List\")",
       "Bash(git check-ignore:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(git push)"
     ],
     "deny": [],
     "ask": []

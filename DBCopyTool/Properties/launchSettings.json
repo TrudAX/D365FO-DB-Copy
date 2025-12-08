@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "DBCopyTool": {
+      "commandName": "Project",
+      "nativeDebugging": true
+    }
+  }
+}
