@@ -31,9 +31,14 @@ namespace DBCopyTool.Services
         /// Discovers all tables in Tier2 database
         /// Returns list of (TableName, RowCount, SizeGB, BytesPerRow)
         /// </summary>
-        public async Task<List<(string TableName, long RowCount, decimal SizeGB, long BytesPerRow)>> DiscoverTablesAsync()
+        public async Task<List<(string TableName, long RowCount, decimal SizeGB, long BytesPerRow)>> DiscoverTablesAsync(string? specificTableName = null)
         {
-            const string query = @"
+            // Build query with optional table name filter
+            string tableFilter = !string.IsNullOrWhiteSpace(specificTableName)
+                ? "AND UPPER(o.name) = @TableName"
+                : "";
+
+            string query = $@"
                 SELECT
                     o.name AS TableName,
                     MAX(s.row_count) AS [RowCount],
@@ -46,6 +51,7 @@ namespace DBCopyTool.Services
                 FROM sys.dm_db_partition_stats s
                 INNER JOIN sys.objects o ON o.object_id = s.object_id
                 WHERE o.type = 'U'
+                {tableFilter}
                 GROUP BY o.name
                 HAVING MAX(s.row_count) > 0
                 ORDER BY [SizeGB] DESC";
@@ -58,6 +64,12 @@ namespace DBCopyTool.Services
             using var connection = new SqlConnection(_connectionString);
             using var command = new SqlCommand(query, connection);
             command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            // Add parameter if filtering by specific table
+            if (!string.IsNullOrWhiteSpace(specificTableName))
+            {
+                command.Parameters.AddWithValue("@TableName", specificTableName);
+            }
 
             await connection.OpenAsync();
             using var reader = await command.ExecuteReaderAsync();
@@ -311,11 +323,19 @@ namespace DBCopyTool.Services
         /// Loads entire SQLDICTIONARY into memory cache for fast lookups
         /// This dramatically reduces query count from ~4000 to 1 during PrepareTableList
         /// </summary>
-        public async Task<SqlDictionaryCache> LoadSqlDictionaryCacheAsync()
+        public async Task<SqlDictionaryCache> LoadSqlDictionaryCacheAsync(string? specificTableName = null)
         {
-            const string query = @"
+            // Build query with optional table name filter
+            // NOTE: We must filter by TableID, not by name, because the name column contains
+            // table names when FIELDID=0 and field names when FIELDID<>0
+            string tableFilter = !string.IsNullOrWhiteSpace(specificTableName)
+                ? "WHERE TableID = (SELECT TableID FROM SQLDICTIONARY WHERE UPPER(name) = @TableName AND FIELDID = 0)"
+                : "";
+
+            string query = $@"
                 SELECT name, TableID, FIELDID, SQLName
                 FROM SQLDICTIONARY
+                {tableFilter}
                 ORDER BY TableID, FIELDID";
 
             _logger("[Tier2] Loading SQLDICTIONARY cache...");
@@ -326,6 +346,12 @@ namespace DBCopyTool.Services
             using var connection = new SqlConnection(_connectionString);
             using var command = new SqlCommand(query, connection);
             command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            // Add parameter if filtering by specific table
+            if (!string.IsNullOrWhiteSpace(specificTableName))
+            {
+                command.Parameters.AddWithValue("@TableName", specificTableName);
+            }
 
             await connection.OpenAsync();
             using var reader = await command.ExecuteReaderAsync();

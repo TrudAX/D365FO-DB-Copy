@@ -395,11 +395,19 @@ namespace DBCopyTool.Services
         /// Loads entire SQLDICTIONARY into memory cache for fast lookups
         /// This dramatically reduces query count from ~4000 to 1 during PrepareTableList
         /// </summary>
-        public async Task<SqlDictionaryCache> LoadSqlDictionaryCacheAsync()
+        public async Task<SqlDictionaryCache> LoadSqlDictionaryCacheAsync(string? specificTableName = null)
         {
-            const string query = @"
+            // Build query with optional table name filter
+            // NOTE: We must filter by TableID, not by name, because the name column contains
+            // table names when FIELDID=0 and field names when FIELDID<>0
+            string tableFilter = !string.IsNullOrWhiteSpace(specificTableName)
+                ? "WHERE TableID = (SELECT TableID FROM SQLDICTIONARY WHERE UPPER(name) = @TableName AND FIELDID = 0)"
+                : "";
+
+            string query = $@"
                 SELECT name, TableID, FIELDID, SQLName
                 FROM SQLDICTIONARY
+                {tableFilter}
                 ORDER BY TableID, FIELDID";
 
             _logger("[AxDB] Loading SQLDICTIONARY cache...");
@@ -410,6 +418,12 @@ namespace DBCopyTool.Services
             using var connection = new SqlConnection(_connectionString);
             using var command = new SqlCommand(query, connection);
             command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            // Add parameter if filtering by specific table
+            if (!string.IsNullOrWhiteSpace(specificTableName))
+            {
+                command.Parameters.AddWithValue("@TableName", specificTableName);
+            }
 
             await connection.OpenAsync();
             using var reader = await command.ExecuteReaderAsync();

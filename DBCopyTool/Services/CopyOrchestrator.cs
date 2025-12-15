@@ -50,20 +50,29 @@ namespace DBCopyTool.Services
                 // Parse and validate strategy overrides
                 var strategyOverrides = ParseStrategyOverrides(_config.StrategyOverrides);
 
+                // Get inclusion patterns early to check for single table optimization
+                var inclusionPatterns = GetPatterns(_config.TablesToInclude);
+
+                // Optimization: If only one specific table (no wildcard), pass it to discovery queries
+                string? specificTableName = null;
+                if (inclusionPatterns.Count == 1 && !inclusionPatterns[0].Contains("*"))
+                {
+                    // Convert to uppercase for SQLDICTIONARY queries (D365 stores table names in uppercase)
+                    specificTableName = inclusionPatterns[0].ToUpper();
+                    _logger($"Single table optimization: filtering discovery to '{specificTableName}'");
+                }
+
                 // ========== LOAD SQLDICTIONARY CACHES ONCE ==========
                 _logger("─────────────────────────────────────────────");
-                var tier2Cache = await _tier2Service.LoadSqlDictionaryCacheAsync();
-                var axDbCache = await _axDbService.LoadSqlDictionaryCacheAsync();
+                var tier2Cache = await _tier2Service.LoadSqlDictionaryCacheAsync(specificTableName);
+                var axDbCache = await _axDbService.LoadSqlDictionaryCacheAsync(specificTableName);
                 _logger("─────────────────────────────────────────────");
                 // ====================================================
 
                 // Discover tables from Tier2
                 _logger("Discovering tables from Tier2...");
-                var discoveredTables = await _tier2Service.DiscoverTablesAsync();
+                var discoveredTables = await _tier2Service.DiscoverTablesAsync(specificTableName);
                 _logger($"Discovered {discoveredTables.Count} tables");
-
-                // Get inclusion and exclusion patterns
-                var inclusionPatterns = GetPatterns(_config.TablesToInclude);
 
                 // Combine TablesToExclude and SystemExcludedTables
                 var combinedExclusions = CombineExclusionPatterns(_config.TablesToExclude, _config.SystemExcludedTables);
@@ -1332,9 +1341,11 @@ namespace DBCopyTool.Services
 
                 case CopyStrategyType.Sql:
                     // Replace parameters in SQL template
+                    // Replace @sysRowVersionFilter with (1 = 1) for standard/TRUNCATE mode
                     string sql = strategy.SqlTemplate
                         .Replace("@recordCount", recordCount.ToString())
-                        .Replace("*", fieldList);
+                        .Replace("*", fieldList)
+                        .Replace("@sysRowVersionFilter", "(1 = 1)", StringComparison.OrdinalIgnoreCase);
                     return sql;
 
                 default:
