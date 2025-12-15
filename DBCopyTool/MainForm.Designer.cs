@@ -92,6 +92,16 @@ namespace DBCopyTool
             txtSystemExcludedTables = new TextBox();
             btnInitSystemExcludedTables = new Button();
 
+            // Optimization settings
+            lblOptimization = new Label();
+            lblTruncateThreshold = new Label();
+            nudTruncateThreshold = new NumericUpDown();
+            lblTier2Timestamps = new Label();
+            txtTier2Timestamps = new TextBox();
+            lblAxDBTimestamps = new Label();
+            txtAxDBTimestamps = new TextBox();
+            btnClearTimestamps = new Button();
+
             // Action buttons
             btnPrepareTableList = new Button();
             btnProcessTables = new Button();
@@ -127,6 +137,7 @@ namespace DBCopyTool
             ((System.ComponentModel.ISupportInitialize)nudTier2CmdTimeout).BeginInit();
             ((System.ComponentModel.ISupportInitialize)nudAxDbCmdTimeout).BeginInit();
             ((System.ComponentModel.ISupportInitialize)nudParallelWorkers).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)nudTruncateThreshold).BeginInit();
             ((System.ComponentModel.ISupportInitialize)dgvTables).BeginInit();
             grpLog.SuspendLayout();
             menuStrip.SuspendLayout();
@@ -381,6 +392,14 @@ namespace DBCopyTool
             tabConnection.Controls.Add(lblSystemExcludedTables);
             tabConnection.Controls.Add(txtSystemExcludedTables);
             tabConnection.Controls.Add(btnInitSystemExcludedTables);
+            tabConnection.Controls.Add(lblOptimization);
+            tabConnection.Controls.Add(lblTruncateThreshold);
+            tabConnection.Controls.Add(nudTruncateThreshold);
+            tabConnection.Controls.Add(lblTier2Timestamps);
+            tabConnection.Controls.Add(txtTier2Timestamps);
+            tabConnection.Controls.Add(lblAxDBTimestamps);
+            tabConnection.Controls.Add(txtAxDBTimestamps);
+            tabConnection.Controls.Add(btnClearTimestamps);
             tabConnection.Location = new Point(4, 24);
             tabConnection.Name = "tabConnection";
             tabConnection.Padding = new Padding(3);
@@ -530,6 +549,52 @@ namespace DBCopyTool
             btnInitSystemExcludedTables.Text = "Init";
             btnInitSystemExcludedTables.Click += BtnInitSystemExcludedTables_Click;
 
+            // SysRowVersion Optimization
+            lblOptimization.AutoSize = true;
+            lblOptimization.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblOptimization.Location = new Point(520, 225);
+            lblOptimization.Text = "SysRowVersion Optimization";
+
+            lblTruncateThreshold.AutoSize = true;
+            lblTruncateThreshold.Location = new Point(520, 250);
+            lblTruncateThreshold.Text = "Truncate Threshold %:";
+
+            nudTruncateThreshold.Location = new Point(660, 248);
+            nudTruncateThreshold.Maximum = 100;
+            nudTruncateThreshold.Minimum = 1;
+            nudTruncateThreshold.Name = "nudTruncateThreshold";
+            nudTruncateThreshold.Size = new Size(80, 23);
+            nudTruncateThreshold.Value = 40;
+
+            lblTier2Timestamps.AutoSize = true;
+            lblTier2Timestamps.Location = new Point(520, 285);
+            lblTier2Timestamps.Text = "Tier2 Timestamps:";
+
+            txtTier2Timestamps.Location = new Point(520, 310);
+            txtTier2Timestamps.Multiline = true;
+            txtTier2Timestamps.Name = "txtTier2Timestamps";
+            txtTier2Timestamps.ScrollBars = ScrollBars.Vertical;
+            txtTier2Timestamps.Size = new Size(400, 140);
+            txtTier2Timestamps.Font = new Font("Consolas", 8F);
+
+            lblAxDBTimestamps.AutoSize = true;
+            lblAxDBTimestamps.Location = new Point(520, 460);
+            lblAxDBTimestamps.Text = "AxDB Timestamps:";
+
+            txtAxDBTimestamps.Location = new Point(520, 485);
+            txtAxDBTimestamps.Multiline = true;
+            txtAxDBTimestamps.Name = "txtAxDBTimestamps";
+            txtAxDBTimestamps.ScrollBars = ScrollBars.Vertical;
+            txtAxDBTimestamps.Size = new Size(400, 140);
+            txtAxDBTimestamps.Font = new Font("Consolas", 8F);
+
+            btnClearTimestamps.Location = new Point(820, 635);
+            btnClearTimestamps.Name = "btnClearTimestamps";
+            btnClearTimestamps.Size = new Size(100, 30);
+            btnClearTimestamps.Text = "Clear All";
+            btnClearTimestamps.UseVisualStyleBackColor = true;
+            btnClearTimestamps.Click += BtnClearTimestamps_Click;
+
             // Action Buttons (in Tables tab)
             btnPrepareTableList.Location = new Point(12, 250);
             btnPrepareTableList.Name = "btnPrepareTableList";
@@ -663,6 +728,7 @@ namespace DBCopyTool
             ((System.ComponentModel.ISupportInitialize)nudTier2CmdTimeout).EndInit();
             ((System.ComponentModel.ISupportInitialize)nudAxDbCmdTimeout).EndInit();
             ((System.ComponentModel.ISupportInitialize)nudParallelWorkers).EndInit();
+            ((System.ComponentModel.ISupportInitialize)nudTruncateThreshold).EndInit();
             ((System.ComponentModel.ISupportInitialize)dgvTables).EndInit();
             grpLog.ResumeLayout(false);
             grpLog.PerformLayout();
@@ -747,6 +813,16 @@ namespace DBCopyTool
         private Label lblSystemExcludedTables;
         private TextBox txtSystemExcludedTables;
         private Button btnInitSystemExcludedTables;
+
+        // Optimization controls
+        private Label lblOptimization;
+        private Label lblTruncateThreshold;
+        private NumericUpDown nudTruncateThreshold;
+        private Label lblTier2Timestamps;
+        private TextBox txtTier2Timestamps;
+        private Label lblAxDBTimestamps;
+        private TextBox txtAxDBTimestamps;
+        private Button btnClearTimestamps;
 
         // Action Buttons
         private Button btnPrepareTableList;

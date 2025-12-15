@@ -10,10 +10,8 @@ namespace DBCopyTool.Models
 
         // Strategy
         public CopyStrategyType StrategyType { get; set; }
-        public int StrategyValue { get; set; }  // Kept for backward compatibility
-        public int? RecIdCount { get; set; }     // For RecId strategy
-        public int? DaysCount { get; set; }      // For ModifiedDate strategy
-        public string WhereClause { get; set; } = string.Empty;  // Custom WHERE condition (without WHERE keyword)
+        public int? RecIdCount { get; set; }       // Explicit count or null for default
+        public string SqlTemplate { get; set; } = string.Empty;  // For SQL strategy
         public bool UseTruncate { get; set; }    // -truncate flag
         public bool NoCompareFlag { get; set; }  // -nocompare flag to disable delta comparison
 
@@ -45,6 +43,18 @@ namespace DBCopyTool.Models
         public int NewInTier2Count { get; set; }         // In Tier2, not in AxDB
         public int DeletedFromAxDbCount { get; set; }    // In AxDB, not in Tier2 fetched set
 
+        // SysRowVersion Optimization Fields
+        public bool UseOptimizedMode { get; set; }
+        public byte[]? StoredTier2Timestamp { get; set; }
+        public byte[]? StoredAxDBTimestamp { get; set; }
+        public DataTable? ControlData { get; set; }  // RecId, SysRowVersion from Tier2
+
+        // Execution metrics for optimized mode
+        public long Tier2ChangedCount { get; set; }
+        public long AxDBChangedCount { get; set; }
+        public double ChangePercent { get; set; }
+        public bool UsedTruncate { get; set; }
+
         // Cached Data (not persisted)
         public DataTable? CachedData { get; set; }
 
@@ -58,22 +68,10 @@ namespace DBCopyTool.Models
                 switch (StrategyType)
                 {
                     case CopyStrategyType.RecId:
-                        parts.Add($"RecId:{RecIdCount ?? StrategyValue}");
+                        parts.Add($"RecId:{RecIdCount ?? 0}");
                         break;
-                    case CopyStrategyType.ModifiedDate:
-                        parts.Add($"Days:{DaysCount ?? StrategyValue}");
-                        break;
-                    case CopyStrategyType.Where:
-                        parts.Add("WHERE");
-                        break;
-                    case CopyStrategyType.RecIdWithWhere:
-                        parts.Add($"RecId:{RecIdCount ?? StrategyValue}+WHERE");
-                        break;
-                    case CopyStrategyType.ModifiedDateWithWhere:
-                        parts.Add($"Days:{DaysCount ?? StrategyValue}+WHERE");
-                        break;
-                    case CopyStrategyType.All:
-                        parts.Add("ALL");
+                    case CopyStrategyType.Sql:
+                        parts.Add($"SQL:{RecIdCount ?? 0}");
                         break;
                 }
 
@@ -113,11 +111,7 @@ namespace DBCopyTool.Models
 
     public enum CopyStrategyType
     {
-        RecId,                  // Number only
-        ModifiedDate,           // days:N
-        Where,                  // where:condition only
-        RecIdWithWhere,         // Number + where:condition
-        ModifiedDateWithWhere,  // days:N + where:condition
-        All                     // Full table
+        RecId,  // Top N by RecId (default)
+        Sql     // Custom SQL query
     }
 }

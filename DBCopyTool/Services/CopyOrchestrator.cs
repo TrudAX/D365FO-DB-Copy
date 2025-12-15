@@ -1,7 +1,9 @@
 using System.Data;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Microsoft.Data.SqlClient;
 using DBCopyTool.Models;
+using DBCopyTool.Helpers;
 
 namespace DBCopyTool.Services
 {
@@ -11,6 +13,7 @@ namespace DBCopyTool.Services
         private readonly Tier2DataService _tier2Service;
         private readonly AxDbDataService _axDbService;
         private readonly Action<string> _logger;
+        private readonly TimestampManager _timestampManager;
 
         private List<TableInfo> _tables = new List<TableInfo>();
         private CancellationTokenSource? _cancellationTokenSource;
@@ -24,6 +27,8 @@ namespace DBCopyTool.Services
             _tier2Service = new Tier2DataService(config.Tier2Connection, logger);
             _axDbService = new AxDbDataService(config.AxDbConnection, logger);
             _logger = logger;
+            _timestampManager = new TimestampManager();
+            _timestampManager.LoadFromConfig(config);
         }
 
         public List<TableInfo> GetTables() => _tables.ToList();
@@ -131,39 +136,15 @@ namespace DBCopyTool.Services
                         continue;
                     }
 
-                    // Verify ModifiedDate strategy requirements
-                    if (strategy.StrategyType == CopyStrategyType.ModifiedDate ||
-                        strategy.StrategyType == CopyStrategyType.ModifiedDateWithWhere)
-                    {
-                        if (!copyableFields.Any(f => f.Equals("MODIFIEDDATETIME", StringComparison.OrdinalIgnoreCase)))
-                        {
-                            _logger($"Table {tableName} configured for ModifiedDate strategy but lacks MODIFIEDDATETIME column");
-
-                            var errorTable = new TableInfo
-                            {
-                                TableName = tableName,
-                                TableId = tier2TableId.Value,
-                                Status = TableStatus.FetchError,
-                                Error = "MODIFIEDDATETIME column not found",
-                                Tier2RowCount = rowCount,
-                                Tier2SizeGB = sizeGB,
-                                BytesPerRow = bytesPerRow
-                            };
-                            _tables.Add(errorTable);
-                            skipped++;
-                            continue;
-                        }
-                    }
-
                     // Generate fetch SQL
                     string fetchSql = GenerateFetchSql(tableName, copyableFields, strategy);
 
                     // Calculate records to copy based on strategy
                     long recordsToCopy = strategy.StrategyType switch
                     {
-                        CopyStrategyType.RecId or CopyStrategyType.RecIdWithWhere => strategy.RecIdCount ?? 0,
-                        CopyStrategyType.All => rowCount,
-                        _ => rowCount  // For ModifiedDate/Where, use Tier2RowCount as rough estimate
+                        CopyStrategyType.RecId => strategy.RecIdCount ?? _config.DefaultRecordCount,
+                        CopyStrategyType.Sql => strategy.RecIdCount ?? _config.DefaultRecordCount,
+                        _ => _config.DefaultRecordCount  // Fallback
                     };
 
                     // Calculate estimated size in MB using minimum of RecordsToCopy and Tier2RowCount
@@ -172,16 +153,23 @@ namespace DBCopyTool.Services
                         ? (decimal)bytesPerRow * recordsForCalculation / 1_000_000m
                         : 0;
 
+                    // Check if optimized mode can be used (SysRowVersion optimization)
+                    bool hasSysRowVersion = copyableFields
+                        .Any(f => f.Equals("SYSROWVERSION", StringComparison.OrdinalIgnoreCase));
+
+                    byte[]? tier2Ts = _timestampManager.GetTier2Timestamp(tableName);
+                    byte[]? axdbTs = _timestampManager.GetAxDBTimestamp(tableName);
+
+                    bool useOptimizedMode = hasSysRowVersion && tier2Ts != null && axdbTs != null;
+
                     // Create TableInfo
                     var tableInfo = new TableInfo
                     {
                         TableName = tableName,
                         TableId = tier2TableId.Value,
                         StrategyType = strategy.StrategyType,
-                        StrategyValue = strategy.RecIdCount ?? strategy.DaysCount ?? 0,  // Backward compatibility
                         RecIdCount = strategy.RecIdCount,
-                        DaysCount = strategy.DaysCount,
-                        WhereClause = strategy.WhereClause,
+                        SqlTemplate = strategy.SqlTemplate,
                         UseTruncate = strategy.UseTruncate,
                         NoCompareFlag = strategy.NoCompareFlag,
                         Tier2RowCount = rowCount,
@@ -191,7 +179,10 @@ namespace DBCopyTool.Services
                         EstimatedSizeMB = estimatedSizeMB,
                         FetchSql = fetchSql,
                         CopyableFields = copyableFields,
-                        Status = TableStatus.Pending
+                        Status = TableStatus.Pending,
+                        UseOptimizedMode = useOptimizedMode,
+                        StoredTier2Timestamp = tier2Ts,
+                        StoredAxDBTimestamp = axdbTs
                     };
 
                     _tables.Add(tableInfo);
@@ -400,24 +391,17 @@ namespace DBCopyTool.Services
         /// </summary>
         private void ReapplyStrategyForTable(TableInfo table)
         {
+            // Reload timestamps from config (they may have been updated)
+            _logger($"[{table.TableName}] Reloading timestamps from config...");
+            _logger($"  Config Tier2Timestamps: '{_config.Tier2Timestamps}'");
+            _logger($"  Config AxDBTimestamps: '{_config.AxDBTimestamps}'");
+            _timestampManager.LoadFromConfig(_config);
+
             // Parse strategy overrides from current config
             var strategyOverrides = ParseStrategyOverrides(_config.StrategyOverrides);
 
             // Get the strategy for this table
             var strategy = GetStrategy(table.TableName, strategyOverrides);
-
-            // Verify ModifiedDate strategy requirements
-            if (strategy.StrategyType == CopyStrategyType.ModifiedDate ||
-                strategy.StrategyType == CopyStrategyType.ModifiedDateWithWhere)
-            {
-                if (!table.CopyableFields.Any(f => f.Equals("MODIFIEDDATETIME", StringComparison.OrdinalIgnoreCase)))
-                {
-                    table.Status = TableStatus.FetchError;
-                    table.Error = "MODIFIEDDATETIME column not found for ModifiedDate strategy";
-                    _logger($"Table {table.TableName} configured for ModifiedDate strategy but lacks MODIFIEDDATETIME column");
-                    return;
-                }
-            }
 
             // Regenerate fetch SQL with new strategy
             string fetchSql = GenerateFetchSql(table.TableName, table.CopyableFields, strategy);
@@ -425,9 +409,9 @@ namespace DBCopyTool.Services
             // Calculate records to copy based on strategy
             long recordsToCopy = strategy.StrategyType switch
             {
-                CopyStrategyType.RecId or CopyStrategyType.RecIdWithWhere => strategy.RecIdCount ?? 0,
-                CopyStrategyType.All => table.Tier2RowCount,
-                _ => table.Tier2RowCount  // For ModifiedDate/Where, use Tier2RowCount as rough estimate
+                CopyStrategyType.RecId => strategy.RecIdCount ?? _config.DefaultRecordCount,
+                CopyStrategyType.Sql => strategy.RecIdCount ?? _config.DefaultRecordCount,
+                _ => _config.DefaultRecordCount  // Fallback
             };
 
             // Calculate estimated size in MB using minimum of RecordsToCopy and Tier2RowCount
@@ -436,19 +420,36 @@ namespace DBCopyTool.Services
                 ? (decimal)table.BytesPerRow * recordsForCalculation / 1_000_000m
                 : 0;
 
+            // Check if optimized mode can be used (reload from config)
+            bool hasSysRowVersion = table.CopyableFields
+                .Any(f => f.Equals("SYSROWVERSION", StringComparison.OrdinalIgnoreCase));
+
+            byte[]? tier2Ts = _timestampManager.GetTier2Timestamp(table.TableName);
+            byte[]? axdbTs = _timestampManager.GetAxDBTimestamp(table.TableName);
+
+            // Debug logging
+            _logger($"[{table.TableName}] Has SysRowVersion: {hasSysRowVersion}, Tier2 TS: {(tier2Ts != null ? "found" : "null")}, AxDB TS: {(axdbTs != null ? "found" : "null")}");
+
+            bool useOptimizedMode = hasSysRowVersion && tier2Ts != null && axdbTs != null;
+
             // Update table with new strategy
             table.StrategyType = strategy.StrategyType;
-            table.StrategyValue = strategy.RecIdCount ?? strategy.DaysCount ?? 0;  // Backward compatibility
             table.RecIdCount = strategy.RecIdCount;
-            table.DaysCount = strategy.DaysCount;
-            table.WhereClause = strategy.WhereClause;
+            table.SqlTemplate = strategy.SqlTemplate;
             table.UseTruncate = strategy.UseTruncate;
             table.NoCompareFlag = strategy.NoCompareFlag;
             table.RecordsToCopy = recordsToCopy;
             table.EstimatedSizeMB = estimatedSizeMB;
             table.FetchSql = fetchSql;
+            table.UseOptimizedMode = useOptimizedMode;
+            table.StoredTier2Timestamp = tier2Ts;
+            table.StoredAxDBTimestamp = axdbTs;
 
             _logger($"Re-applied strategy for {table.TableName}: {table.StrategyDisplay}");
+            if (useOptimizedMode)
+            {
+                _logger($"[{table.TableName}] Optimization enabled (timestamps found)");
+            }
         }
 
         /// <summary>
@@ -533,10 +534,341 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
+        /// Process table using SysRowVersion optimization (two-query approach)
+        /// </summary>
+        private async Task ProcessTableOptimizedAsync(TableInfo table, CancellationToken cancellationToken)
+        {
+            try
+            {
+                int recordCount = table.RecIdCount ?? _config.DefaultRecordCount;
+
+                // STEP 1: Fetch control data (RecId, SysRowVersion)
+                _logger($"[{table.TableName}] Optimized mode: Fetching control data");
+                table.Status = TableStatus.Fetching;
+                OnTablesUpdated();
+
+                var controlStopwatch = Stopwatch.StartNew();
+                DataTable controlData = await _tier2Service.FetchControlDataAsync(
+                    table.TableName,
+                    recordCount,
+                    cancellationToken);
+                controlStopwatch.Stop();
+
+                table.ControlData = controlData;
+                _logger($"[{table.TableName}] Control query: {controlData.Rows.Count} records in {controlStopwatch.Elapsed.TotalSeconds:F2}s");
+
+                if (controlData.Rows.Count == 0)
+                {
+                    _logger($"[{table.TableName}] No data in Tier2, skipping");
+                    table.Status = TableStatus.Inserted;
+                    return;
+                }
+
+                // Calculate min RecId and max SysRowVersion from control data
+                long minRecId = controlData.AsEnumerable().Min(r => r.Field<long>("RecId"));
+                byte[] tier2MaxTimestamp = controlData.AsEnumerable()
+                    .Select(r => r.Field<byte[]>("SysRowVersion"))
+                    .Max(new TimestampComparer())!;
+
+                // STEP 2: Evaluate change volume
+                long tier2ChangedCount = controlData.AsEnumerable()
+                    .Count(r => TimestampHelper.CompareTimestamp(r.Field<byte[]>("SysRowVersion"), table.StoredTier2Timestamp) > 0);
+
+                long axdbChangedCount = await _axDbService.GetChangedCountAsync(
+                    table.TableName,
+                    table.StoredAxDBTimestamp!,
+                    cancellationToken);
+
+                long axdbTotalCount = await _axDbService.GetRowCountAsync(table.TableName, cancellationToken);
+
+                long totalChanges = tier2ChangedCount + axdbChangedCount;
+                double changePercent = controlData.Rows.Count > 0
+                    ? (double)totalChanges / controlData.Rows.Count * 100
+                    : 0;
+
+                double excessPercent = controlData.Rows.Count > 0
+                    ? (double)(axdbTotalCount - controlData.Rows.Count) / controlData.Rows.Count * 100
+                    : 0;
+
+                bool useTruncate = changePercent > _config.TruncateThresholdPercent ||
+                                   excessPercent > _config.TruncateThresholdPercent;
+
+                table.Tier2ChangedCount = tier2ChangedCount;
+                table.AxDBChangedCount = axdbChangedCount;
+                table.ChangePercent = changePercent;
+                table.UsedTruncate = useTruncate;
+
+                _logger($"[{table.TableName}] Tier2 changes: {tier2ChangedCount}, AxDB changes: {axdbChangedCount}, " +
+                       $"Total: {changePercent:F1}%, Excess: {excessPercent:F1}%");
+
+                if (useTruncate)
+                {
+                    _logger($"[{table.TableName}] Using TRUNCATE mode (threshold: {_config.TruncateThresholdPercent}%)");
+                    await ProcessTableTruncateModeAsync(table, tier2MaxTimestamp, cancellationToken);
+                }
+                else
+                {
+                    _logger($"[{table.TableName}] Using INCREMENTAL mode");
+                    await ProcessTableIncrementalModeAsync(table, tier2MaxTimestamp, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                table.Status = TableStatus.FetchError;
+                table.Error = "Cancelled";
+                _logger($"Cancelled {table.TableName}");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                table.Status = table.Status == TableStatus.Fetching ? TableStatus.FetchError : TableStatus.InsertError;
+                table.Error = ex.Message;
+                _logger($"ERROR processing {table.TableName}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// TRUNCATE mode: Full table refresh
+        /// </summary>
+        private async Task ProcessTableTruncateModeAsync(TableInfo table, byte[] tier2MaxTimestamp, CancellationToken cancellationToken)
+        {
+            // Fetch full data
+            var fetchStopwatch = Stopwatch.StartNew();
+            DataTable data = await _tier2Service.FetchDataBySqlAsync(
+                table.TableName,
+                table.FetchSql,
+                cancellationToken);
+
+            table.CachedData = data;
+            table.RecordsFetched = data.Rows.Count;
+            table.FetchTimeSeconds = (decimal)fetchStopwatch.Elapsed.TotalSeconds;
+
+            _logger($"[{table.TableName}] Fetched {data.Rows.Count} records in {table.FetchTimeSeconds:F2}s");
+
+            // Insert with truncate
+            table.Status = TableStatus.Inserting;
+            table.UseTruncate = true;  // Force TRUNCATE instead of delta comparison
+            OnTablesUpdated();
+
+            await _axDbService.InsertDataAsync(table, cancellationToken);
+
+            // Update timestamps on success
+            using var connection = new SqlConnection(_axDbService.GetConnectionString());
+            await connection.OpenAsync(cancellationToken);
+            byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, connection, null);
+
+            if (axdbMaxTimestamp != null)
+            {
+                _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp);
+                _timestampManager.SaveToConfig(_config);
+            }
+
+            table.CachedData = null;
+            table.Status = TableStatus.Inserted;
+
+            _logger($"[{table.TableName}] Completed (TRUNCATE mode)");
+        }
+
+        /// <summary>
+        /// INCREMENTAL mode: Delete changed/deleted, insert changed/new
+        /// </summary>
+        private async Task ProcessTableIncrementalModeAsync(TableInfo table, byte[] tier2MaxTimestamp, CancellationToken cancellationToken)
+        {
+            table.Status = TableStatus.Inserting;
+            OnTablesUpdated();
+
+            using var connection = new SqlConnection(_axDbService.GetConnectionString());
+            await connection.OpenAsync(cancellationToken);
+            using var transaction = connection.BeginTransaction();
+
+            try
+            {
+                // Disable triggers
+                string disableTriggers = $"ALTER TABLE [{table.TableName}] DISABLE TRIGGER ALL";
+                _logger($"[AxDB SQL] {disableTriggers}");
+                await ExecuteNonQueryAsync(disableTriggers, connection, transaction);
+
+                // Execute incremental deletes
+                await _axDbService.ExecuteIncrementalDeletesAsync(
+                    table,
+                    table.ControlData!,
+                    table.StoredTier2Timestamp!,
+                    table.StoredAxDBTimestamp!,
+                    connection,
+                    transaction,
+                    cancellationToken);
+
+                // Get remaining RecIds in AxDB
+                var existingRecIds = await _axDbService.GetRecIdSetAsync(
+                    table.TableName,
+                    connection,
+                    transaction,
+                    cancellationToken);
+
+                // Find RecIds to insert (in Tier2 but not in AxDB)
+                var tier2RecIds = table.ControlData!.AsEnumerable()
+                    .Select(r => r.Field<long>("RecId"))
+                    .ToHashSet();
+
+                var missingRecIds = tier2RecIds.Where(id => !existingRecIds.Contains(id)).ToHashSet();
+
+                if (missingRecIds.Count == 0)
+                {
+                    _logger($"[{table.TableName}] No records to insert");
+                    table.InsertTimeSeconds = 0;
+                }
+                else
+                {
+                    // Step 2.1: Calculate threshold for fetching
+                    // Get timestamps for missing RecIds from control data
+                    var missingTimestamps = table.ControlData!.AsEnumerable()
+                        .Where(r => missingRecIds.Contains(r.Field<long>("RecId")))
+                        .Select(r => r.Field<byte[]>("SysRowVersion"))
+                        .ToList();
+
+                    byte[] minMissingTimestamp = missingTimestamps.Min(new TimestampComparer())!;
+                    byte[] fetchThreshold = TimestampHelper.MinTimestamp(minMissingTimestamp, table.StoredTier2Timestamp)!;
+                    long minRecId = table.ControlData!.AsEnumerable().Min(r => r.Field<long>("RecId"));
+
+                    // Step 2.2: Fetch data from Tier2 using timestamp threshold (includes more records than needed)
+                    _logger($"[{table.TableName}] Fetching missing records (expected {missingRecIds.Count})");
+                    var fetchStopwatch = Stopwatch.StartNew();
+
+                    DataTable tier2Data = await _tier2Service.FetchDataByTimestampAsync(
+                        table.TableName,
+                        table.CopyableFields,
+                        table.RecIdCount ?? _config.DefaultRecordCount,
+                        fetchThreshold,
+                        minRecId,
+                        cancellationToken);
+
+                    table.FetchTimeSeconds = (decimal)fetchStopwatch.Elapsed.TotalSeconds;
+                    _logger($"[{table.TableName}] Fetched {tier2Data.Rows.Count} records from Tier2");
+
+                    // Step 2.3: Filter out records that already exist in AxDB
+                    var rowsToInsert = tier2Data.AsEnumerable()
+                        .Where(r => !existingRecIds.Contains(r.Field<long>("RecId")))
+                        .ToList();
+
+                    _logger($"[{table.TableName}] After filtering: {rowsToInsert.Count} records to insert");
+
+                    if (rowsToInsert.Count > 0)
+                    {
+                        DataTable filteredData = tier2Data.Clone();
+                        foreach (var row in rowsToInsert)
+                        {
+                            filteredData.ImportRow(row);
+                        }
+
+                        // Step 2.4: Bulk insert
+                        var insertStopwatch = Stopwatch.StartNew();
+                        using (var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction))
+                        {
+                            bulkCopy.DestinationTableName = table.TableName;
+                            bulkCopy.BatchSize = 10000;
+
+                            foreach (DataColumn col in filteredData.Columns)
+                            {
+                                bulkCopy.ColumnMappings.Add(col.ColumnName, col.ColumnName);
+                            }
+
+                            await bulkCopy.WriteToServerAsync(filteredData, cancellationToken);
+                        }
+
+                        table.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
+                        table.RecordsFetched = filteredData.Rows.Count;
+                        _logger($"[{table.TableName}] Inserted {filteredData.Rows.Count} records");
+                    }
+                    else
+                    {
+                        table.InsertTimeSeconds = 0;
+                    }
+                }
+
+                // Enable triggers
+                string enableTriggers = $"ALTER TABLE [{table.TableName}] ENABLE TRIGGER ALL";
+                _logger($"[AxDB SQL] {enableTriggers}");
+                await ExecuteNonQueryAsync(enableTriggers, connection, transaction);
+
+                // Update sequence
+                await UpdateSequenceAsync(table, connection, transaction, cancellationToken);
+
+                // Commit transaction
+                transaction.Commit();
+
+                // Update timestamps
+                byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, connection, null);
+                if (axdbMaxTimestamp != null)
+                {
+                    _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp);
+                    _timestampManager.SaveToConfig(_config);
+                }
+
+                table.Status = TableStatus.Inserted;
+                _logger($"[{table.TableName}] Completed (INCREMENTAL mode)");
+            }
+            catch
+            {
+                try
+                {
+                    transaction.Rollback();
+                    await ExecuteNonQueryAsync($"ALTER TABLE [{table.TableName}] ENABLE TRIGGER ALL", connection, null);
+                }
+                catch { }
+                throw;
+            }
+        }
+
+        private async Task ExecuteNonQueryAsync(string sql, SqlConnection connection, SqlTransaction? transaction)
+        {
+            using var command = new SqlCommand(sql, connection, transaction);
+            command.CommandTimeout = 0;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private async Task UpdateSequenceAsync(TableInfo table, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
+        {
+            string maxRecIdSql = $"SELECT MAX(RecId) FROM [{table.TableName}]";
+            using var cmd1 = new SqlCommand(maxRecIdSql, connection, transaction);
+            var maxRecIdResult = await cmd1.ExecuteScalarAsync(cancellationToken);
+
+            if (maxRecIdResult == null || maxRecIdResult == DBNull.Value)
+                return;
+
+            long maxRecId = Convert.ToInt64(maxRecIdResult);
+            string sequenceName = $"SEQ_{table.TableId}";
+
+            string currentSeqSql = "SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = @SequenceName";
+            using var cmd2 = new SqlCommand(currentSeqSql, connection, transaction);
+            cmd2.Parameters.AddWithValue("@SequenceName", sequenceName);
+            var currentSeqResult = await cmd2.ExecuteScalarAsync(cancellationToken);
+
+            if (currentSeqResult == null || currentSeqResult == DBNull.Value)
+                return;
+
+            long currentSeq = Convert.ToInt64(currentSeqResult);
+            long newSeq = Math.Max(maxRecId, currentSeq) + 10;
+
+            string updateSeqSql = $"ALTER SEQUENCE [{sequenceName}] RESTART WITH {newSeq}";
+            _logger($"[AxDB SQL] {updateSeqSql}");
+
+            using var cmd3 = new SqlCommand(updateSeqSql, connection, transaction);
+            await cmd3.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        /// <summary>
         /// Process a single table: fetch → insert → clear memory
         /// </summary>
         private async Task ProcessSingleTableAsync(TableInfo table, CancellationToken cancellationToken)
         {
+            // Route to optimized mode if available
+            if (table.UseOptimizedMode)
+            {
+                await ProcessTableOptimizedAsync(table, cancellationToken);
+                return;
+            }
+
+            // Standard mode (existing logic)
             try
             {
                 // STAGE 1: FETCH
@@ -548,7 +880,6 @@ namespace DBCopyTool.Services
                 DataTable data = await _tier2Service.FetchDataBySqlAsync(
                     table.TableName,
                     table.FetchSql,
-                    table.DaysCount,
                     cancellationToken);
 
                 table.CachedData = data;
@@ -575,6 +906,34 @@ namespace DBCopyTool.Services
                 await _axDbService.InsertDataAsync(table, cancellationToken);
 
                 _logger($"Deleted {table.TableName}: {table.DeleteTimeSeconds:F2}s, Inserted: {table.InsertTimeSeconds:F2}s");
+
+                // Update timestamps if table has SysRowVersion (for future optimization)
+                if (table.CopyableFields.Any(f => f.Equals("SYSROWVERSION", StringComparison.OrdinalIgnoreCase)))
+                {
+                    try
+                    {
+                        using var connection = new SqlConnection(_axDbService.GetConnectionString());
+                        await connection.OpenAsync(cancellationToken);
+
+                        byte[]? tier2MaxTs = table.CachedData?.AsEnumerable()
+                            .Select(r => r.Field<byte[]>("SYSROWVERSION"))
+                            .Where(ts => ts != null)
+                            .Max(new TimestampComparer());
+
+                        byte[]? axdbMaxTs = await _axDbService.GetMaxTimestampAsync(table.TableName, connection, null);
+
+                        if (tier2MaxTs != null && axdbMaxTs != null)
+                        {
+                            _timestampManager.SetTimestamps(table.TableName, tier2MaxTs, axdbMaxTs);
+                            _timestampManager.SaveToConfig(_config);
+                            _logger($"[{table.TableName}] Timestamps saved for future optimization");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger($"[{table.TableName}] Warning: Could not save timestamps: {ex.Message}");
+                    }
+                }
 
                 // STAGE 3: CLEANUP MEMORY (on success only)
                 table.CachedData = null;  // Clear memory immediately
@@ -733,79 +1092,80 @@ namespace DBCopyTool.Services
                 throw new Exception("Invalid format: missing table name");
 
             string tableName = parts[0].Trim();
-            string sourceStrategy = parts.Length > 1 ? parts[1].Trim() : "";
-            string whereClause = "";
 
-            // Parse WHERE clause from any position after table name
-            for (int i = 2; i < parts.Length; i++)
+            // Case 1: TableName only (use default RecId strategy)
+            if (parts.Length == 1)
             {
-                if (parts[i].Trim().StartsWith("where:", StringComparison.OrdinalIgnoreCase))
+                return new StrategyOverride
                 {
-                    whereClause = parts[i].Trim().Substring(6).Trim();
-                    if (string.IsNullOrEmpty(whereClause))
-                        throw new Exception("Invalid format: empty WHERE condition");
-                    break;
-                }
+                    TableName = tableName,
+                    StrategyType = CopyStrategyType.RecId,
+                    RecIdCount = _config.DefaultRecordCount,
+                    UseTruncate = useTruncate,
+                    NoCompareFlag = noCompare
+                };
             }
 
-            // Parse source strategy
-            CopyStrategyType strategyType;
-            int? recIdCount = null;
-            int? daysCount = null;
+            string part1 = parts[1].Trim();
 
-            if (string.IsNullOrEmpty(sourceStrategy))
+            // Case 2: TableName|sql:... (SQL without explicit count)
+            if (part1.StartsWith("sql:", StringComparison.OrdinalIgnoreCase))
             {
-                // Default strategy
-                strategyType = string.IsNullOrEmpty(whereClause) ? CopyStrategyType.RecId : CopyStrategyType.RecIdWithWhere;
-                recIdCount = _config.DefaultRecordCount;
+                return ParseSqlStrategy(tableName, part1, null, useTruncate, noCompare);
             }
-            else if (sourceStrategy.Equals("all", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!string.IsNullOrEmpty(whereClause))
-                    throw new Exception("Invalid format: 'all' cannot be combined with WHERE clause");
-                strategyType = CopyStrategyType.All;
-                useTruncate = true; // 'all' implies truncate
-            }
-            else if (sourceStrategy.StartsWith("days:", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!int.TryParse(sourceStrategy.Substring(5), out int days) || days <= 0)
-                    throw new Exception($"Invalid format: '{sourceStrategy}' is not a valid days strategy");
 
-                daysCount = days;
-                strategyType = string.IsNullOrEmpty(whereClause) ? CopyStrategyType.ModifiedDate : CopyStrategyType.ModifiedDateWithWhere;
-            }
-            else if (sourceStrategy.StartsWith("where:", StringComparison.OrdinalIgnoreCase))
-            {
-                // where: in second position
-                whereClause = sourceStrategy.Substring(6).Trim();
-                if (string.IsNullOrEmpty(whereClause))
-                    throw new Exception("Invalid format: empty WHERE condition");
-                strategyType = CopyStrategyType.Where;
-            }
-            else if (int.TryParse(sourceStrategy, out int count))
+            // Case 3: TableName|Number (RecId strategy)
+            if (int.TryParse(part1, out int count))
             {
                 if (count <= 0)
-                    throw new Exception($"Invalid format: RecId count must be positive");
+                    throw new Exception("Invalid format: RecId count must be positive");
 
-                recIdCount = count;
-                strategyType = string.IsNullOrEmpty(whereClause) ? CopyStrategyType.RecId : CopyStrategyType.RecIdWithWhere;
+                // Check if there's a sql: part after the count
+                if (parts.Length >= 3)
+                {
+                    string part2 = parts[2].Trim();
+                    if (part2.StartsWith("sql:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Case 4: TableName|Number|sql:... (SQL with explicit count)
+                        return ParseSqlStrategy(tableName, part2, count, useTruncate, noCompare);
+                    }
+                    else
+                    {
+                        throw new Exception($"Invalid format: unexpected '{part2}' after record count");
+                    }
+                }
+
+                return new StrategyOverride
+                {
+                    TableName = tableName,
+                    StrategyType = CopyStrategyType.RecId,
+                    RecIdCount = count,
+                    UseTruncate = useTruncate,
+                    NoCompareFlag = noCompare
+                };
             }
-            else if (string.IsNullOrEmpty(sourceStrategy) && useTruncate)
-            {
-                throw new Exception("Invalid format: missing source strategy before -truncate");
-            }
-            else
-            {
-                throw new Exception($"Invalid format: '{sourceStrategy}' is not a valid strategy");
-            }
+
+            throw new Exception($"Invalid format: '{part1}' is not a valid strategy (expected number or 'sql:...')");
+        }
+
+        private StrategyOverride ParseSqlStrategy(string tableName, string sqlPart, int? recordCount, bool useTruncate, bool noCompare)
+        {
+            // Extract SQL after "sql:" prefix
+            string sql = sqlPart.Substring(4).Trim();
+
+            if (string.IsNullOrEmpty(sql))
+                throw new Exception("Invalid format: empty SQL statement");
+
+            // Validate: must contain *
+            if (!sql.Contains("*"))
+                throw new Exception("SQL strategy must contain '*' for field replacement");
 
             return new StrategyOverride
             {
                 TableName = tableName,
-                StrategyType = strategyType,
-                RecIdCount = recIdCount,
-                DaysCount = daysCount,
-                WhereClause = whereClause,
+                StrategyType = CopyStrategyType.Sql,
+                RecIdCount = recordCount,
+                SqlTemplate = sql,
                 UseTruncate = useTruncate,
                 NoCompareFlag = noCompare
             };
@@ -822,9 +1182,9 @@ namespace DBCopyTool.Services
                 TableName = tableName,
                 StrategyType = CopyStrategyType.RecId,
                 RecIdCount = _config.DefaultRecordCount,
-                DaysCount = null,
-                WhereClause = string.Empty,
-                UseTruncate = false
+                SqlTemplate = string.Empty,
+                UseTruncate = false,
+                NoCompareFlag = false
             };
         }
 
@@ -925,27 +1285,19 @@ namespace DBCopyTool.Services
         private string GenerateFetchSql(string tableName, List<string> fields, StrategyOverride strategy)
         {
             string fieldList = string.Join(", ", fields.Select(f => $"[{f}]"));
-            string whereClause = string.IsNullOrEmpty(strategy.WhereClause) ? "" : $" WHERE {strategy.WhereClause}";
+            int recordCount = strategy.RecIdCount ?? _config.DefaultRecordCount;
 
             switch (strategy.StrategyType)
             {
                 case CopyStrategyType.RecId:
-                    return $"SELECT TOP ({strategy.RecIdCount}) {fieldList} FROM [{tableName}] ORDER BY RecId DESC";
+                    return $"SELECT TOP ({recordCount}) {fieldList} FROM [{tableName}] ORDER BY RecId DESC";
 
-                case CopyStrategyType.ModifiedDate:
-                    return $"SELECT {fieldList} FROM [{tableName}] WHERE [MODIFIEDDATETIME] > @CutoffDate";
-
-                case CopyStrategyType.Where:
-                    return $"SELECT {fieldList} FROM [{tableName}]{whereClause}";
-
-                case CopyStrategyType.RecIdWithWhere:
-                    return $"SELECT TOP ({strategy.RecIdCount}) {fieldList} FROM [{tableName}]{whereClause} ORDER BY RecId DESC";
-
-                case CopyStrategyType.ModifiedDateWithWhere:
-                    return $"SELECT {fieldList} FROM [{tableName}] WHERE [MODIFIEDDATETIME] > @CutoffDate AND ({strategy.WhereClause})";
-
-                case CopyStrategyType.All:
-                    return $"SELECT {fieldList} FROM [{tableName}]";
+                case CopyStrategyType.Sql:
+                    // Replace parameters in SQL template
+                    string sql = strategy.SqlTemplate
+                        .Replace("@recordCount", recordCount.ToString())
+                        .Replace("*", fieldList);
+                    return sql;
 
                 default:
                     throw new Exception($"Unsupported strategy type: {strategy.StrategyType}");
@@ -968,10 +1320,18 @@ namespace DBCopyTool.Services
     {
         public string TableName { get; set; } = string.Empty;
         public CopyStrategyType StrategyType { get; set; }
-        public int? RecIdCount { get; set; }
-        public int? DaysCount { get; set; }
-        public string WhereClause { get; set; } = string.Empty;
+        public int? RecIdCount { get; set; }      // For RecId strategy or SQL with explicit count
+        public string SqlTemplate { get; set; } = string.Empty;  // For SQL strategy (raw template with * and @recordCount)
         public bool UseTruncate { get; set; }
         public bool NoCompareFlag { get; set; }
+    }
+
+    // Comparer for SQL Server timestamps
+    public class TimestampComparer : IComparer<byte[]?>
+    {
+        public int Compare(byte[]? x, byte[]? y)
+        {
+            return TimestampHelper.CompareTimestamp(x, y);
+        }
     }
 }

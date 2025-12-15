@@ -273,6 +273,11 @@ namespace DBCopyTool
 
             txtSystemExcludedTables.Text = _currentConfig.SystemExcludedTables;
 
+            // Optimization settings
+            nudTruncateThreshold.Value = _currentConfig.TruncateThresholdPercent;
+            txtTier2Timestamps.Text = _currentConfig.Tier2Timestamps;
+            txtAxDBTimestamps.Text = _currentConfig.AxDBTimestamps;
+
             // Tables tab
             txtTablesToInclude.Text = _currentConfig.TablesToInclude;
             txtTablesToExclude.Text = _currentConfig.TablesToExclude;
@@ -307,11 +312,34 @@ namespace DBCopyTool
 
             _currentConfig.SystemExcludedTables = txtSystemExcludedTables.Text;
 
+            // Optimization settings
+            _currentConfig.TruncateThresholdPercent = (int)nudTruncateThreshold.Value;
+            _currentConfig.Tier2Timestamps = txtTier2Timestamps.Text;
+            _currentConfig.AxDBTimestamps = txtAxDBTimestamps.Text;
+
             _currentConfig.TablesToInclude = txtTablesToInclude.Text;
             _currentConfig.TablesToExclude = txtTablesToExclude.Text;
             _currentConfig.FieldsToExclude = txtFieldsToExclude.Text;
             _currentConfig.DefaultRecordCount = (int)nudDefaultRecordCount.Value;
             _currentConfig.StrategyOverrides = txtStrategyOverrides.Text;
+        }
+
+        private void RefreshTimestampUI()
+        {
+            // Update timestamp textboxes from config (they may have been updated by CopyOrchestrator)
+            if (InvokeRequired)
+            {
+                Invoke(new Action(() =>
+                {
+                    txtTier2Timestamps.Text = _currentConfig.Tier2Timestamps;
+                    txtAxDBTimestamps.Text = _currentConfig.AxDBTimestamps;
+                }));
+            }
+            else
+            {
+                txtTier2Timestamps.Text = _currentConfig.Tier2Timestamps;
+                txtAxDBTimestamps.Text = _currentConfig.AxDBTimestamps;
+            }
         }
 
         private void RefreshConfigDropdown()
@@ -769,25 +797,17 @@ namespace DBCopyTool
             if (table.Tier2RowCount > 0 &&
                 table.RecordsToCopy > 0 &&
                 table.Tier2RowCount <= table.RecordsToCopy &&
-                !table.UseTruncate &&
-                table.StrategyType != DBCopyTool.Models.CopyStrategyType.All)
+                !table.UseTruncate)
                 return "TRUNCATE (optimization: copying all Tier2 rows)";
 
-            if (table.UseTruncate || table.StrategyType == DBCopyTool.Models.CopyStrategyType.All)
+            if (table.UseTruncate)
                 return "TRUNCATE";
 
             switch (table.StrategyType)
             {
                 case DBCopyTool.Models.CopyStrategyType.RecId:
+                case DBCopyTool.Models.CopyStrategyType.Sql:
                     return "Delete by RecId";
-                case DBCopyTool.Models.CopyStrategyType.ModifiedDate:
-                    return "Delete by ModifiedDateTime + RecId list";
-                case DBCopyTool.Models.CopyStrategyType.Where:
-                    return "Delete by WHERE + RecId";
-                case DBCopyTool.Models.CopyStrategyType.RecIdWithWhere:
-                    return "Delete by WHERE + RecId";
-                case DBCopyTool.Models.CopyStrategyType.ModifiedDateWithWhere:
-                    return "Delete by ModifiedDateTime + WHERE + RecId list";
                 default:
                     return "Unknown";
             }
@@ -801,8 +821,7 @@ namespace DBCopyTool
             if (table.Tier2RowCount > 0 &&
                 table.RecordsToCopy > 0 &&
                 table.Tier2RowCount <= table.RecordsToCopy &&
-                !table.UseTruncate &&
-                table.StrategyType != DBCopyTool.Models.CopyStrategyType.All)
+                !table.UseTruncate)
             {
                 sql.AppendLine($"-- Optimization: Tier2 has {table.Tier2RowCount} rows, copying {table.RecordsToCopy}");
                 sql.AppendLine($"-- Using TRUNCATE instead of DELETE for better performance");
@@ -810,66 +829,19 @@ namespace DBCopyTool
                 return sql.ToString();
             }
 
-            if (table.UseTruncate || table.StrategyType == DBCopyTool.Models.CopyStrategyType.All)
+            if (table.UseTruncate)
             {
                 sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]");
                 return sql.ToString();
             }
 
-            int stepNumber = 1;
-
             switch (table.StrategyType)
             {
                 case DBCopyTool.Models.CopyStrategyType.RecId:
+                case DBCopyTool.Models.CopyStrategyType.Sql:
                     sql.AppendLine($"DELETE FROM [{table.TableName}]");
                     sql.AppendLine("WHERE RECID >= @MinRecId");
                     sql.AppendLine("-- Note: @MinRecId will be determined after fetching source data");
-                    break;
-
-                case DBCopyTool.Models.CopyStrategyType.ModifiedDate:
-                    sql.AppendLine($"-- Step {stepNumber++}: Delete by ModifiedDateTime");
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine("WHERE [MODIFIEDDATETIME] >= @MinModifiedDateTime");
-                    sql.AppendLine();
-                    sql.AppendLine($"-- Step {stepNumber++}: Delete by RecId (matching fetched records)");
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine("WHERE RECID IN (@FetchedRecIdList)");
-                    break;
-
-                case DBCopyTool.Models.CopyStrategyType.Where:
-                    sql.AppendLine($"-- Step {stepNumber++}: Delete by custom WHERE condition");
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine($"WHERE {table.WhereClause}");
-                    sql.AppendLine();
-                    sql.AppendLine($"-- Step {stepNumber++}: Delete by RecId (>= minimum from source)");
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine("WHERE RECID >= @MinRecId");
-                    sql.AppendLine("-- Note: @MinRecId will be determined after fetching source data");
-                    break;
-
-                case DBCopyTool.Models.CopyStrategyType.RecIdWithWhere:
-                    sql.AppendLine($"-- Step {stepNumber++}: Delete by custom WHERE condition");
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine($"WHERE {table.WhereClause}");
-                    sql.AppendLine();
-                    sql.AppendLine($"-- Step {stepNumber++}: Delete by RecId (>= minimum from source)");
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine("WHERE RECID >= @MinRecId");
-                    sql.AppendLine("-- Note: @MinRecId will be determined after fetching source data");
-                    break;
-
-                case DBCopyTool.Models.CopyStrategyType.ModifiedDateWithWhere:
-                    sql.AppendLine($"-- Step {stepNumber++}: Delete by ModifiedDateTime");
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine("WHERE [MODIFIEDDATETIME] >= @MinModifiedDateTime");
-                    sql.AppendLine();
-                    sql.AppendLine($"-- Step {stepNumber++}: Delete by custom WHERE condition");
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine($"WHERE {table.WhereClause}");
-                    sql.AppendLine();
-                    sql.AppendLine($"-- Step {stepNumber++}: Delete by RecId (matching fetched records)");
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine("WHERE RECID IN (@FetchedRecIdList)");
                     break;
             }
 
@@ -1125,6 +1097,9 @@ namespace DBCopyTool
                 {
                     UpdateTablesGrid(_orchestrator.GetTables());
                 }
+
+                // Refresh timestamp UI (they may have been updated during processing)
+                RefreshTimestampUI();
             }
         }
 
@@ -1156,6 +1131,25 @@ namespace DBCopyTool
         {
             InitializeSystemExcludedTables();
             Log("System excluded tables initialized with default values");
+        }
+
+        private void BtnClearTimestamps_Click(object sender, EventArgs e)
+        {
+            var result = MessageBox.Show(
+                "This will clear all stored timestamps and disable optimization until the next successful sync.\n\n" +
+                "Are you sure you want to continue?",
+                "Clear Timestamps",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (result == DialogResult.Yes)
+            {
+                txtTier2Timestamps.Text = string.Empty;
+                txtAxDBTimestamps.Text = string.Empty;
+                _currentConfig.Tier2Timestamps = string.Empty;
+                _currentConfig.AxDBTimestamps = string.Empty;
+                Log("All timestamps cleared - optimization will be disabled until next successful sync");
+            }
         }
 
         private string? PromptForConfigName(string prompt, string defaultValue)

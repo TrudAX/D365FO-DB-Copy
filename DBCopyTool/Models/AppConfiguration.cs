@@ -34,6 +34,13 @@ namespace DBCopyTool.Models
         // Parallel workers for merged fetch+insert workflow
         public int ParallelWorkers { get; set; } = 10;
 
+        // New threshold setting for SysRowVersion optimization
+        public int TruncateThresholdPercent { get; set; } = 40;
+
+        // New timestamp storage for SysRowVersion optimization
+        public string Tier2Timestamps { get; set; } = "";  // Multiline: TableName,0xTimestamp
+        public string AxDBTimestamps { get; set; } = "";   // Multiline: TableName,0xTimestamp
+
         // Helper method to create a default configuration
         public static AppConfiguration CreateDefault()
         {

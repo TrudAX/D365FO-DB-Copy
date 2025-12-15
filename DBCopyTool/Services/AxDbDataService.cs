@@ -22,6 +22,11 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
+        /// Gets the connection string for AxDB
+        /// </summary>
+        public string GetConnectionString() => _connectionString;
+
+        /// <summary>
         /// Tests the connection to AxDB database
         /// </summary>
         public async Task<bool> TestConnectionAsync()
@@ -283,8 +288,7 @@ namespace DBCopyTool.Services
             if (tableInfo.Tier2RowCount > 0 &&
                 tableInfo.RecordsToCopy > 0 &&
                 tableInfo.Tier2RowCount <= tableInfo.RecordsToCopy &&
-                !tableInfo.UseTruncate &&
-                tableInfo.StrategyType != CopyStrategyType.All)
+                !tableInfo.UseTruncate)
             {
                 _logger($"[AxDB] Optimization: Tier2 has {tableInfo.Tier2RowCount} rows, copying {tableInfo.RecordsToCopy} - using TRUNCATE instead of DELETE");
 
@@ -297,8 +301,8 @@ namespace DBCopyTool.Services
                 return;
             }
 
-            // If UseTruncate flag is set or strategy is All, always truncate
-            if (tableInfo.UseTruncate || tableInfo.StrategyType == CopyStrategyType.All)
+            // If UseTruncate flag is set, always truncate
+            if (tableInfo.UseTruncate)
             {
                 string truncateQuery = $"TRUNCATE TABLE [{tableInfo.TableName}]";
                 _logger($"[AxDB SQL] Truncating table: {truncateQuery}");
@@ -313,32 +317,13 @@ namespace DBCopyTool.Services
             switch (tableInfo.StrategyType)
             {
                 case CopyStrategyType.RecId:
-                    // RecId only: DELETE WHERE RecId >= @MinRecId
+                case CopyStrategyType.Sql:
+                    // RecId/Sql: DELETE WHERE RecId >= @MinRecId
                     await DeleteByRecIdAsync(tableInfo, connection, transaction, cancellationToken);
                     break;
 
-                case CopyStrategyType.ModifiedDate:
-                    // DateTime only: DELETE WHERE ModifiedDateTime >= @MinDate; DELETE WHERE RecId IN (@FetchedIds)
-                    await DeleteByModifiedDateAsync(tableInfo, connection, transaction, cancellationToken);
-                    break;
-
-                case CopyStrategyType.Where:
-                    // WHERE only: DELETE WHERE {same condition}; DELETE WHERE RecId >= @MinRecId
-                    await DeleteByWhereClauseAsync(tableInfo, connection, transaction, cancellationToken);
-                    await DeleteByRecIdAsync(tableInfo, connection, transaction, cancellationToken);
-                    break;
-
-                case CopyStrategyType.RecIdWithWhere:
-                    // RecId + WHERE: DELETE WHERE {same condition}; DELETE WHERE RecId >= @MinRecId
-                    await DeleteByWhereClauseAsync(tableInfo, connection, transaction, cancellationToken);
-                    await DeleteByRecIdAsync(tableInfo, connection, transaction, cancellationToken);
-                    break;
-
-                case CopyStrategyType.ModifiedDateWithWhere:
-                    // DateTime + WHERE: DELETE WHERE ModifiedDateTime >= @MinDate; DELETE WHERE {condition}; DELETE WHERE RecId IN (@FetchedIds)
-                    await DeleteByModifiedDateAsync(tableInfo, connection, transaction, cancellationToken);
-                    await DeleteByWhereClauseAsync(tableInfo, connection, transaction, cancellationToken);
-                    break;
+                default:
+                    throw new Exception($"Unsupported strategy type: {tableInfo.StrategyType}");
             }
         }
 
@@ -354,48 +339,6 @@ namespace DBCopyTool.Services
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        private async Task DeleteByModifiedDateAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
-        {
-            DateTime minModifiedDate = GetMinModifiedDate(tableInfo.CachedData!);
-            string deleteDateQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE [MODIFIEDDATETIME] >= @MinModifiedDate";
-            _logger($"[AxDB SQL] Deleting by ModifiedDateTime: {deleteDateQuery} (MinDate={minModifiedDate:yyyy-MM-dd HH:mm:ss})");
-
-            using var command1 = new SqlCommand(deleteDateQuery, connection, transaction);
-            command1.Parameters.AddWithValue("@MinModifiedDate", minModifiedDate);
-            command1.CommandTimeout = _connectionSettings.CommandTimeout;
-            await command1.ExecuteNonQueryAsync(cancellationToken);
-
-            // Delete by RecId list (handles records modified in Tier2 that had old dates in AxDB)
-            var recIds = GetRecIdList(tableInfo.CachedData!);
-            if (recIds.Count > 0)
-            {
-                _logger($"[AxDB] Deleting {recIds.Count} records by RecId list");
-                // Split into batches of 1000 to avoid SQL parameter limits
-                for (int i = 0; i < recIds.Count; i += 1000)
-                {
-                    var batch = recIds.Skip(i).Take(1000).ToList();
-                    string recIdList = string.Join(",", batch);
-                    string deleteRecIdQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE RecId IN ({recIdList})";
-
-                    using var command2 = new SqlCommand(deleteRecIdQuery, connection, transaction);
-                    command2.CommandTimeout = _connectionSettings.CommandTimeout;
-                    await command2.ExecuteNonQueryAsync(cancellationToken);
-                }
-            }
-        }
-
-        private async Task DeleteByWhereClauseAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
-        {
-            if (string.IsNullOrEmpty(tableInfo.WhereClause))
-                return;
-
-            string deleteQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE {tableInfo.WhereClause}";
-            _logger($"[AxDB SQL] Deleting by WHERE clause: {deleteQuery}");
-
-            using var command = new SqlCommand(deleteQuery, connection, transaction);
-            command.CommandTimeout = _connectionSettings.CommandTimeout;
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
 
         /// <summary>
         /// Updates the sequence for a table if needed
@@ -586,10 +529,6 @@ namespace DBCopyTool.Services
 
             // Skip if truncating (no point comparing)
             if (tableInfo.UseTruncate)
-                return false;
-
-            // Skip for ALL strategy (always truncates)
-            if (tableInfo.StrategyType == CopyStrategyType.All)
                 return false;
 
             // Skip if no data
@@ -861,27 +800,6 @@ namespace DBCopyTool.Services
             return minRecId == long.MaxValue ? 0 : minRecId;
         }
 
-        /// <summary>
-        /// Gets the minimum ModifiedDateTime from a DataTable
-        /// </summary>
-        private DateTime GetMinModifiedDate(DataTable data)
-        {
-            if (!data.Columns.Contains("MODIFIEDDATETIME"))
-                return DateTime.MinValue;
-
-            DateTime minDate = DateTime.MaxValue;
-            foreach (DataRow row in data.Rows)
-            {
-                if (row["MODIFIEDDATETIME"] != DBNull.Value)
-                {
-                    DateTime date = Convert.ToDateTime(row["MODIFIEDDATETIME"]);
-                    if (date < minDate)
-                        minDate = date;
-                }
-            }
-
-            return minDate == DateTime.MaxValue ? DateTime.MinValue : minDate;
-        }
 
         /// <summary>
         /// Gets the list of RecIds from a DataTable
@@ -902,6 +820,182 @@ namespace DBCopyTool.Services
             }
 
             return recIds;
+        }
+
+        /// <summary>
+        /// Gets count of changed records in AxDB (for SysRowVersion optimization)
+        /// </summary>
+        public async Task<long> GetChangedCountAsync(
+            string tableName,
+            byte[] timestampThreshold,
+            CancellationToken cancellationToken)
+        {
+            string sql = $"SELECT COUNT(*) FROM [{tableName}] WHERE SysRowVersion > @Threshold";
+
+            using var connection = new SqlConnection(_connectionString);
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.Add("@Threshold", System.Data.SqlDbType.Binary, 8).Value = timestampThreshold;
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            await connection.OpenAsync(cancellationToken);
+            return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+        }
+
+        /// <summary>
+        /// Gets total row count in AxDB table (for SysRowVersion optimization)
+        /// </summary>
+        public async Task<long> GetRowCountAsync(string tableName, CancellationToken cancellationToken)
+        {
+            string sql = $"SELECT COUNT(*) FROM [{tableName}]";
+
+            using var connection = new SqlConnection(_connectionString);
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            await connection.OpenAsync(cancellationToken);
+            return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+        }
+
+        /// <summary>
+        /// Gets all RecIds from AxDB table (for SysRowVersion optimization)
+        /// </summary>
+        public async Task<HashSet<long>> GetRecIdSetAsync(
+            string tableName,
+            SqlConnection connection,
+            SqlTransaction? transaction,
+            CancellationToken cancellationToken)
+        {
+            string sql = $"SELECT RecId FROM [{tableName}]";
+
+            using var command = new SqlCommand(sql, connection, transaction);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            var result = new HashSet<long>();
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                result.Add(reader.GetInt64(0));
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Gets max SysRowVersion from AxDB table (for SysRowVersion optimization)
+        /// </summary>
+        public async Task<byte[]?> GetMaxTimestampAsync(
+            string tableName,
+            SqlConnection connection,
+            SqlTransaction? transaction)
+        {
+            string sql = $"SELECT MAX(SysRowVersion) FROM [{tableName}]";
+
+            using var command = new SqlCommand(sql, connection, transaction);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            var result = await command.ExecuteScalarAsync();
+            return result as byte[];
+        }
+
+        /// <summary>
+        /// Executes optimized incremental delete operations (for SysRowVersion optimization)
+        /// </summary>
+        public async Task ExecuteIncrementalDeletesAsync(
+            TableInfo table,
+            DataTable tier2Control,
+            byte[] tier2Timestamp,
+            byte[] axdbTimestamp,
+            SqlConnection connection,
+            SqlTransaction? transaction,
+            CancellationToken cancellationToken)
+        {
+            var deleteStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            // Create temp table with Tier2 RecIds
+            _logger($"[AxDB] Creating temp table for {table.TableName}");
+            await CreateTier2ControlTempTableAsync(tier2Control, connection, transaction, cancellationToken);
+
+            // 1.1: Delete records modified in Tier2
+            string delete1 = $@"
+                DELETE FROM [{table.TableName}]
+                WHERE RecId IN (
+                    SELECT RecId FROM #Tier2Control
+                    WHERE SysRowVersion > @Tier2Timestamp
+                )";
+            _logger($"[AxDB SQL] Delete Tier2-modified: {delete1}");
+
+            using (var cmd = new SqlCommand(delete1, connection, transaction))
+            {
+                cmd.Parameters.Add("@Tier2Timestamp", System.Data.SqlDbType.Binary, 8).Value = tier2Timestamp;
+                cmd.CommandTimeout = _connectionSettings.CommandTimeout;
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            // 1.2: Delete records modified in AxDB
+            string delete2 = $@"
+                DELETE FROM [{table.TableName}]
+                WHERE SysRowVersion > @AxDBTimestamp";
+            _logger($"[AxDB SQL] Delete AxDB-modified: {delete2}");
+
+            using (var cmd = new SqlCommand(delete2, connection, transaction))
+            {
+                cmd.Parameters.Add("@AxDBTimestamp", System.Data.SqlDbType.Binary, 8).Value = axdbTimestamp;
+                cmd.CommandTimeout = _connectionSettings.CommandTimeout;
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            // 1.3: Delete records not in Tier2 target set
+            string delete3 = $@"
+                DELETE FROM [{table.TableName}]
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM #Tier2Control t
+                    WHERE t.RecId = [{table.TableName}].RecId
+                )";
+            _logger($"[AxDB SQL] Delete not-in-Tier2: {delete3}");
+
+            using (var cmd = new SqlCommand(delete3, connection, transaction))
+            {
+                cmd.CommandTimeout = _connectionSettings.CommandTimeout;
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            // Drop temp table
+            using (var cmd = new SqlCommand("DROP TABLE #Tier2Control", connection, transaction))
+            {
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            deleteStopwatch.Stop();
+            table.DeleteTimeSeconds = (decimal)deleteStopwatch.Elapsed.TotalSeconds;
+        }
+
+        private async Task CreateTier2ControlTempTableAsync(
+            DataTable tier2Control,
+            SqlConnection connection,
+            SqlTransaction? transaction,
+            CancellationToken cancellationToken)
+        {
+            // Create temp table
+            string createSql = @"
+                CREATE TABLE #Tier2Control (
+                    RecId BIGINT PRIMARY KEY,
+                    SysRowVersion BINARY(8)
+                )";
+
+            using (var cmd = new SqlCommand(createSql, connection, transaction))
+            {
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            // Bulk insert Tier2 control data
+            using var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction);
+            bulkCopy.DestinationTableName = "#Tier2Control";
+            bulkCopy.ColumnMappings.Add("RecId", "RecId");
+            bulkCopy.ColumnMappings.Add("SysRowVersion", "SysRowVersion");
+            bulkCopy.BatchSize = 10000;
+
+            await bulkCopy.WriteToServerAsync(tier2Control, cancellationToken);
         }
     }
 

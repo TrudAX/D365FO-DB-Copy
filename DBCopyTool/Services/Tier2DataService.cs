@@ -175,7 +175,7 @@ namespace DBCopyTool.Services
         /// <summary>
         /// Fetches data using pre-generated SQL with optional date parameter
         /// </summary>
-        public async Task<DataTable> FetchDataBySqlAsync(string tableName, string sql, int? days, CancellationToken cancellationToken)
+        public async Task<DataTable> FetchDataBySqlAsync(string tableName, string sql, CancellationToken cancellationToken)
         {
             _logger($"[Tier2 SQL] Fetching data from {tableName}: {sql}");
 
@@ -183,17 +183,73 @@ namespace DBCopyTool.Services
             using var command = new SqlCommand(sql, connection);
             command.CommandTimeout = _connectionSettings.CommandTimeout;
 
-            // Add date parameter if needed (for ModifiedDate strategies)
-            if (days.HasValue)
-            {
-                DateTime cutoffDate = DateTime.UtcNow.AddDays(-days.Value);
-                command.Parameters.AddWithValue("@CutoffDate", cutoffDate);
-                _logger($"[Tier2 SQL] ModifiedDate cutoff: {cutoffDate:yyyy-MM-dd HH:mm:ss}");
-            }
-
             var dataTable = new DataTable();
 
             await connection.OpenAsync(cancellationToken);
+            using var adapter = new SqlDataAdapter(command);
+            adapter.Fill(dataTable);
+
+            return dataTable;
+        }
+
+        /// <summary>
+        /// Fetches control data (RecId, SysRowVersion) for optimized comparison
+        /// </summary>
+        public async Task<DataTable> FetchControlDataAsync(
+            string tableName,
+            int recordCount,
+            CancellationToken cancellationToken)
+        {
+            string sql = $@"
+                SELECT TOP ({recordCount}) RecId, SysRowVersion
+                FROM [{tableName}]
+                ORDER BY RecId DESC";
+
+            _logger($"[Tier2 SQL] Control query: {sql}");
+
+            using var connection = new SqlConnection(_connectionString);
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            var dataTable = new DataTable();
+            await connection.OpenAsync(cancellationToken);
+
+            using var adapter = new SqlDataAdapter(command);
+            adapter.Fill(dataTable);
+
+            return dataTable;
+        }
+
+        /// <summary>
+        /// Fetches data with SysRowVersion filter
+        /// </summary>
+        public async Task<DataTable> FetchDataByTimestampAsync(
+            string tableName,
+            List<string> fields,
+            int recordCount,
+            byte[] timestampThreshold,
+            long minRecId,
+            CancellationToken cancellationToken)
+        {
+            string fieldList = string.Join(", ", fields.Select(f => $"[{f}]"));
+            string sql = $@"
+                SELECT TOP ({recordCount}) {fieldList}
+                FROM [{tableName}]
+                WHERE SysRowVersion >= @Threshold
+                  AND RecId >= @MinRecId
+                ORDER BY RecId DESC";
+
+            _logger($"[Tier2 SQL] Timestamp query: {sql}");
+
+            using var connection = new SqlConnection(_connectionString);
+            using var command = new SqlCommand(sql, connection);
+            command.Parameters.Add("@Threshold", System.Data.SqlDbType.Binary, 8).Value = timestampThreshold;
+            command.Parameters.AddWithValue("@MinRecId", minRecId);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            var dataTable = new DataTable();
+            await connection.OpenAsync(cancellationToken);
+
             using var adapter = new SqlDataAdapter(command);
             adapter.Fill(dataTable);
 
