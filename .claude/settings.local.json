@@ -18,7 +18,8 @@
       "Bash(git check-ignore:*)",
       "Bash(powershell:*)",
       "Bash(git push)",
-      "Bash(dotnet clean:*)"
+      "Bash(dotnet clean:*)",
+      "Bash(gh release create:*)"
     ],
     "deny": [],
     "ask": []
