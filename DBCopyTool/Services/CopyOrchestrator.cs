@@ -799,6 +799,7 @@ namespace DBCopyTool.Services
                         {
                             bulkCopy.DestinationTableName = table.TableName;
                             bulkCopy.BatchSize = 10000;
+                            bulkCopy.BulkCopyTimeout = _config.AxDbConnection.CommandTimeout;
 
                             foreach (DataColumn col in filteredData.Columns)
                             {
