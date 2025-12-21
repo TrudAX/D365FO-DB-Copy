@@ -1004,6 +1004,7 @@ namespace DBCopyTool.Services
             bulkCopy.ColumnMappings.Add("RecId", "RecId");
             bulkCopy.ColumnMappings.Add("SysRowVersion", "SysRowVersion");
             bulkCopy.BatchSize = 10000;
+            bulkCopy.BulkCopyTimeout = _connectionSettings.CommandTimeout;
 
             await bulkCopy.WriteToServerAsync(tier2Control, cancellationToken);
         }
