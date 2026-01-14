@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-D365FO Database Copy Tool is a WinForms .NET 9 application that copies data from Dynamics 365 Finance & Operations Azure SQL Database (Tier2) to local SQL Server (AxDB). It enables developers to synchronize production-like data to local development environments with sophisticated filtering and optimization strategies.
+D365FO Database Sync Tool is a WinForms .NET 9 application that synchronizes data from Dynamics 365 Finance & Operations Azure SQL Database (Tier2) to local SQL Server (AxDB). It enables developers to synchronize production-like data to local development environments with sophisticated filtering and optimization strategies.
 
 **Purpose:** Instead of performing full database restores, this tool copies only the most recently modified data, significantly reducing synchronization time.
 
@@ -17,10 +17,10 @@ D365FO Database Copy Tool is a WinForms .NET 9 application that copies data from
 
 ```bash
 # Build the solution
-dotnet build DBCopyTool/DBCopyTool.sln
+dotnet build DBSyncTool/DBSyncTool.sln
 
 # Run the application
-dotnet run --project DBCopyTool/DBCopyTool.csproj
+dotnet run --project DBSyncTool/DBSyncTool.csproj
 ```
 
 Version format: `1.0.YYYY.DayOfYear` (auto-increments with each build using MSBuild properties)

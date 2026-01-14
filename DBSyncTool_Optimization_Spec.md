@@ -1,4 +1,4 @@
-# D365FO Database Copy Tool - SysRowVersion Optimization Specification
+# D365FO Database Sync Tool - SysRowVersion Optimization Specification
 
 **Version:** 2.0  
 **Date:** December 2024
@@ -9,7 +9,7 @@
 
 ### 1.1 Purpose
 
-This document specifies optimizations to the D365FO Database Copy Tool to significantly reduce sync time by leveraging `SysRowVersion` (SQL Server timestamp) for incremental change detection, along with strategy simplification and estimation fixes.
+This document specifies optimizations to the D365FO Database Sync Tool to significantly reduce sync time by leveraging `SysRowVersion` (SQL Server timestamp) for incremental change detection, along with strategy simplification and estimation fixes.
 
 ### 1.2 Problem Statement
 

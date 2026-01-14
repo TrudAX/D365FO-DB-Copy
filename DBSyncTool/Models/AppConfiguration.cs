@@ -1,4 +1,4 @@
-namespace DBCopyTool.Models
+namespace DBSyncTool.Models
 {
     public class AppConfiguration
     {

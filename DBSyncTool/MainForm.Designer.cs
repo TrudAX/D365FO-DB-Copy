@@ -1,4 +1,4 @@
-namespace DBCopyTool
+namespace DBSyncTool
 {
     partial class MainForm
     {

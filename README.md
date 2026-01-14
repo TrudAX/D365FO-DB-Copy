@@ -1,6 +1,6 @@
-# D365FO Database Copy Tool
+# D365FO Database Sync Tool
 
-A WinForms .NET 9 application for copying data from Dynamics 365 Finance & Operations Azure SQL Database (Tier2) to local SQL Server (AxDB).
+A WinForms .NET 9 application for synchronizing data from Dynamics 365 Finance & Operations Azure SQL Database (Tier2) to local SQL Server (AxDB).
 
 ## Overview
 

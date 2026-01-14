@@ -1,4 +1,4 @@
-# D365FO Database Copy Tool - Detailed Specification
+# D365FO Database Sync Tool - Detailed Specification
 
 **Version:** 1.0  
 **Date:** November 2025
@@ -9,7 +9,7 @@
 
 ### 1.1 Purpose
 
-The D365FO Database Copy Tool is a Windows Forms application designed to synchronize data from a Tier2 Azure SQL Database to a local AxDB SQL Server database on D365FO development virtual machines. Instead of performing full database restores, this tool copies only the most recently modified data, significantly reducing synchronization time.
+The D365FO Database Sync Tool is a Windows Forms application designed to synchronize data from a Tier2 Azure SQL Database to a local AxDB SQL Server database on D365FO development virtual machines. Instead of performing full database restores, this tool copies only the most recently modified data, significantly reducing synchronization time.
 
 ### 1.2 Target Environment
 
@@ -645,7 +645,7 @@ During this stage, the following rules are applied to filter tables:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  D365FO Database Copy Tool                                   [_][□][X] │
+│  D365FO Database Sync Tool                                   [_][□][X] │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ Config: [Default        ▼] [Save] [Save As] [Load]                      │
 ├─────────────────────────────────────────────────────────────────────────┤

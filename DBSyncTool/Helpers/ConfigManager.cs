@@ -1,7 +1,7 @@
 using System.Text.Json;
-using DBCopyTool.Models;
+using DBSyncTool.Models;
 
-namespace DBCopyTool.Helpers
+namespace DBSyncTool.Helpers
 {
     public class ConfigManager
     {

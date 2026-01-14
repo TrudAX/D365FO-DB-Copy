@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "DBCopyTool": {
+    "DBSyncTool": {
       "commandName": "Project",
       "nativeDebugging": true
     }

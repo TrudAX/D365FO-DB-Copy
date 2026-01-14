@@ -1,4 +1,4 @@
-namespace DBCopyTool.Models
+namespace DBSyncTool.Models
 {
     /// <summary>
     /// In-memory cache for SQLDICTIONARY data to avoid repeated database queries

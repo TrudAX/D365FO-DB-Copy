@@ -1,6 +1,6 @@
 using System.Data;
 
-namespace DBCopyTool.Models
+namespace DBSyncTool.Models
 {
     public class TableInfo
     {

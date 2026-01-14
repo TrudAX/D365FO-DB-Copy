@@ -2,10 +2,10 @@ using System.Data;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
-using DBCopyTool.Models;
-using DBCopyTool.Helpers;
+using DBSyncTool.Models;
+using DBSyncTool.Helpers;
 
-namespace DBCopyTool.Services
+namespace DBSyncTool.Services
 {
     public class CopyOrchestrator
     {

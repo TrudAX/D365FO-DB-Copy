@@ -1,4 +1,4 @@
-# DBCopyTool Optimization Testing Guide
+# DBSyncTool Optimization Testing Guide
 
 This guide covers testing procedures for the newly implemented optimizations.
 

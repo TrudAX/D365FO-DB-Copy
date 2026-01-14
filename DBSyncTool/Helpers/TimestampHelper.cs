@@ -1,4 +1,4 @@
-namespace DBCopyTool.Helpers
+namespace DBSyncTool.Helpers
 {
     /// <summary>
     /// Helper methods for working with SQL Server timestamps (SysRowVersion)

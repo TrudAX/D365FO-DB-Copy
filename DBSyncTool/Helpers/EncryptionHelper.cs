@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace DBCopyTool.Helpers
+namespace DBSyncTool.Helpers
 {
     public static class EncryptionHelper
     {

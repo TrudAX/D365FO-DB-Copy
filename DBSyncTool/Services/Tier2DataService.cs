@@ -1,8 +1,8 @@
 using System.Data;
 using Microsoft.Data.SqlClient;
-using DBCopyTool.Models;
+using DBSyncTool.Models;
 
-namespace DBCopyTool.Services
+namespace DBSyncTool.Services
 {
     public class Tier2DataService
     {

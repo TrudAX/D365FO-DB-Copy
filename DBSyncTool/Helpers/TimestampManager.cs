@@ -1,6 +1,6 @@
-using DBCopyTool.Models;
+using DBSyncTool.Models;
 
-namespace DBCopyTool.Helpers
+namespace DBSyncTool.Helpers
 {
     /// <summary>
     /// Manages timestamp storage for SysRowVersion optimization

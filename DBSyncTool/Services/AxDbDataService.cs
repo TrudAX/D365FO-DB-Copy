@@ -1,9 +1,9 @@
 using System.Data;
 using System.Diagnostics;
 using Microsoft.Data.SqlClient;
-using DBCopyTool.Models;
+using DBSyncTool.Models;
 
-namespace DBCopyTool.Services
+namespace DBSyncTool.Services
 {
     public class AxDbDataService
     {

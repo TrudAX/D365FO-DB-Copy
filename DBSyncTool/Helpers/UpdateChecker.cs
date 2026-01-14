@@ -2,12 +2,12 @@ using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
 
-namespace DBCopyTool.Helpers
+namespace DBSyncTool.Helpers
 {
     public class UpdateChecker
     {
-        private const string GitHubApiUrl = "https://api.github.com/repos/TrudAX/D365FO-DB-Copy/releases/latest";
-        private const string ReleasesPageUrl = "https://github.com/TrudAX/D365FO-DB-Copy/releases";
+        private const string GitHubApiUrl = "https://api.github.com/repos/TrudAX/D365FO-DB-Sync/releases/latest";
+        private const string ReleasesPageUrl = "https://github.com/TrudAX/D365FO-DB-Sync/releases";
 
         public class UpdateCheckResult
         {
@@ -36,7 +36,7 @@ namespace DBCopyTool.Helpers
             try
             {
                 using var client = new HttpClient();
-                client.DefaultRequestHeaders.Add("User-Agent", "D365FO-DB-Copy");
+                client.DefaultRequestHeaders.Add("User-Agent", "D365FO-DB-Sync");
                 client.DefaultRequestHeaders.Add("Accept", "application/vnd.github.v3+json");
                 client.Timeout = TimeSpan.FromSeconds(10);
 

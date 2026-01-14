@@ -1,9 +1,9 @@
-using DBCopyTool.Helpers;
-using DBCopyTool.Models;
-using DBCopyTool.Services;
+using DBSyncTool.Helpers;
+using DBSyncTool.Models;
+using DBSyncTool.Services;
 using System.ComponentModel;
 
-namespace DBCopyTool
+namespace DBSyncTool
 {
     public partial class MainForm : Form
     {
@@ -807,8 +807,8 @@ namespace DBCopyTool
 
             switch (table.StrategyType)
             {
-                case DBCopyTool.Models.CopyStrategyType.RecId:
-                case DBCopyTool.Models.CopyStrategyType.Sql:
+                case DBSyncTool.Models.CopyStrategyType.RecId:
+                case DBSyncTool.Models.CopyStrategyType.Sql:
                     return "Delete by RecId";
                 default:
                     return "Unknown";
@@ -839,8 +839,8 @@ namespace DBCopyTool
 
             switch (table.StrategyType)
             {
-                case DBCopyTool.Models.CopyStrategyType.RecId:
-                case DBCopyTool.Models.CopyStrategyType.Sql:
+                case DBSyncTool.Models.CopyStrategyType.RecId:
+                case DBSyncTool.Models.CopyStrategyType.Sql:
                     sql.AppendLine($"DELETE FROM [{table.TableName}]");
                     sql.AppendLine("WHERE RECID >= @MinRecId");
                     sql.AppendLine("-- Note: @MinRecId will be determined after fetching source data");
