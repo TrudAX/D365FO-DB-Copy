@@ -715,7 +715,7 @@ namespace DBSyncTool
             MinimumSize = new Size(1437, 650);
             Name = "MainForm";
             StartPosition = FormStartPosition.CenterScreen;
-            Text = "D365FO Database Copy Tool";
+            Text = "D365FO Database Sync Tool";
 
             tabControl.ResumeLayout(false);
             tabTables.ResumeLayout(false);

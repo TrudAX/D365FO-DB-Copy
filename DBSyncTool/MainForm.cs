@@ -976,7 +976,7 @@ namespace DBSyncTool
 
             var lblTitle = new Label
             {
-                Text = "D365FO Database Copy Tool",
+                Text = "D365FO Database Sync Tool",
                 Font = new Font("Segoe UI", 12F, FontStyle.Bold),
                 Left = 20,
                 Top = 20,
@@ -1013,7 +1013,7 @@ namespace DBSyncTool
 
             var linkGitHub = new LinkLabel
             {
-                Text = "https://github.com/TrudAX/",
+                Text = "https://github.com/TrudAX/D365FO-DB-Sync",
                 Left = 20,
                 Top = 125,
                 Width = 350,
@@ -1025,7 +1025,7 @@ namespace DBSyncTool
                 {
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                     {
-                        FileName = "https://github.com/TrudAX/",
+                        FileName = "https://github.com/TrudAX/D365FO-DB-Sync",
                         UseShellExecute = true
                     });
                 }
