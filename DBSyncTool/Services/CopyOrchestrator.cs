@@ -622,6 +622,7 @@ namespace DBSyncTool.Services
                 table.Tier2ChangedCount = tier2ChangedCount;
                 table.AxDBChangedCount = axdbChangedCount;
                 table.ChangePercent = changePercent;
+                table.ExcessPercent = excessPercent;
                 table.UsedTruncate = useTruncate;
 
                 _logger($"[{table.TableName}] Tier2 changes: {tier2ChangedCount}, AxDB changes: {axdbChangedCount}, " +
@@ -705,6 +706,55 @@ namespace DBSyncTool.Services
             table.Status = TableStatus.Inserting;
             OnTablesUpdated();
 
+            // OPTIMIZATION: When no changes and no excess records, skip DELETE operations
+            // Only check for missing records to insert
+            bool hasChanges = table.Tier2ChangedCount > 0 || table.AxDBChangedCount > 0;
+            bool hasExcess = table.ExcessPercent > 0;
+
+            if (!hasChanges && !hasExcess)
+            {
+                _logger($"[{table.TableName}] No changes detected, checking for missing records only");
+
+                // Quick check: Get existing RecIds from AxDB (no transaction needed for read)
+                using var readConnection = new SqlConnection(_axDbService.GetConnectionString());
+                await readConnection.OpenAsync(cancellationToken);
+
+                var existingRecIds = await _axDbService.GetRecIdSetAsync(
+                    table.TableName,
+                    readConnection,
+                    null,  // No transaction for read-only
+                    cancellationToken);
+
+                var tier2RecIds = table.ControlData!.AsEnumerable()
+                    .Select(r => r.Field<long>("RecId"))
+                    .ToHashSet();
+
+                var missingRecIds = tier2RecIds.Where(id => !existingRecIds.Contains(id)).ToHashSet();
+
+                if (missingRecIds.Count == 0)
+                {
+                    // Perfect sync - nothing to do!
+                    _logger($"[{table.TableName}] Already in perfect sync, skipping all operations");
+                    table.InsertTimeSeconds = 0;
+                    table.DeleteTimeSeconds = 0;
+                    table.ControlData = null;  // Free memory
+                    table.Status = TableStatus.Inserted;
+
+                    // Still update timestamps to current max
+                    byte[] axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, readConnection, null);
+                    _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp ?? tier2MaxTimestamp);
+                    _timestampManager.SaveToConfig(_config);
+                    OnTimestampsUpdated();
+
+                    _logger($"[{table.TableName}] Completed (INCREMENTAL mode - no changes)");
+                    return;
+                }
+
+                // Missing records exist - insert them without DELETE operations
+                _logger($"[{table.TableName}] Inserting {missingRecIds.Count} missing records (skipping DELETE operations)");
+                // Fall through to normal insert logic below (but skip DELETEs)
+            }
+
             using var connection = new SqlConnection(_axDbService.GetConnectionString());
             await connection.OpenAsync(cancellationToken);
             using var transaction = connection.BeginTransaction();
@@ -716,15 +766,23 @@ namespace DBSyncTool.Services
                 _logger($"[AxDB SQL] {disableTriggers}");
                 await ExecuteNonQueryAsync(disableTriggers, connection, transaction);
 
-                // Execute incremental deletes
-                await _axDbService.ExecuteIncrementalDeletesAsync(
-                    table,
-                    table.ControlData!,
-                    table.StoredTier2Timestamp!,
-                    table.StoredAxDBTimestamp!,
-                    connection,
-                    transaction,
-                    cancellationToken);
+                // Execute incremental deletes (skip if no changes and no excess)
+                if (hasChanges || hasExcess)
+                {
+                    await _axDbService.ExecuteIncrementalDeletesAsync(
+                        table,
+                        table.ControlData!,
+                        table.StoredTier2Timestamp!,
+                        table.StoredAxDBTimestamp!,
+                        connection,
+                        transaction,
+                        cancellationToken);
+                }
+                else
+                {
+                    _logger($"[{table.TableName}] Skipping DELETE operations (no changes, no excess)");
+                    table.DeleteTimeSeconds = 0;
+                }
 
                 // Get remaining RecIds in AxDB
                 var existingRecIds = await _axDbService.GetRecIdSetAsync(

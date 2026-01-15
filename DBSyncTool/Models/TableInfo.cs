@@ -52,6 +52,7 @@ namespace DBSyncTool.Models
         public long Tier2ChangedCount { get; set; }
         public long AxDBChangedCount { get; set; }
         public double ChangePercent { get; set; }
+        public double ExcessPercent { get; set; }
         public bool UsedTruncate { get; set; }
 
         // Cached Data (not persisted)
