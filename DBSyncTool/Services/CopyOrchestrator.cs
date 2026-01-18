@@ -357,8 +357,11 @@ namespace DBSyncTool.Services
                 {
                     table.Status = TableStatus.Pending;
                     table.Error = string.Empty;
-                    // Clear cached data to force re-fetch with fresh data
+                    // Dispose and clear cached data to force re-fetch with fresh data
+                    table.CachedData?.Dispose();
                     table.CachedData = null;
+                    table.ControlData?.Dispose();
+                    table.ControlData = null;
                 }
 
                 OnTablesUpdated();
@@ -494,7 +497,10 @@ namespace DBSyncTool.Services
             // Reset table state for re-processing
             table.Status = TableStatus.Pending;
             table.Error = string.Empty;
+            table.CachedData?.Dispose();
             table.CachedData = null;
+            table.ControlData?.Dispose();
+            table.ControlData = null;
             table.RecordsFetched = 0;
             table.FetchTimeSeconds = 0;
             table.DeleteTimeSeconds = 0;
@@ -597,6 +603,8 @@ namespace DBSyncTool.Services
                 if (controlData.Rows.Count == 0)
                 {
                     _logger($"[{table.TableName}] No data in Tier2, skipping");
+                    controlData.Dispose();
+                    table.ControlData = null;
                     table.Status = TableStatus.Inserted;
                     return;
                 }
@@ -652,6 +660,11 @@ namespace DBSyncTool.Services
             }
             catch (OperationCanceledException)
             {
+                // Dispose control data on cancellation - don't keep for retry in optimized mode
+                table.ControlData?.Dispose();
+                table.ControlData = null;
+                table.CachedData?.Dispose();
+                table.CachedData = null;
                 table.Status = TableStatus.FetchError;
                 table.Error = "Cancelled";
                 _logger($"Cancelled {table.TableName}");
@@ -659,6 +672,11 @@ namespace DBSyncTool.Services
             }
             catch (Exception ex)
             {
+                // Dispose control data on error - don't keep for retry in optimized mode
+                table.ControlData?.Dispose();
+                table.ControlData = null;
+                table.CachedData?.Dispose();
+                table.CachedData = null;
                 table.Status = table.Status == TableStatus.Fetching ? TableStatus.FetchError : TableStatus.InsertError;
                 table.Error = ex.Message;
                 _logger($"ERROR processing {table.TableName}: {ex.Message}");
@@ -929,6 +947,10 @@ namespace DBSyncTool.Services
             }
             catch
             {
+                // Dispose control data on error
+                table.ControlData?.Dispose();
+                table.ControlData = null;
+
                 try
                 {
                     transaction.Rollback();
@@ -1091,7 +1113,9 @@ namespace DBSyncTool.Services
             }
             catch (OperationCanceledException)
             {
-                // Keep CachedData for potential retry
+                // Dispose CachedData - retry will re-fetch anyway
+                table.CachedData?.Dispose();
+                table.CachedData = null;
                 table.Status = TableStatus.FetchError;
                 table.Error = "Cancelled";
                 _logger($"Cancelled {table.TableName}");
@@ -1099,16 +1123,18 @@ namespace DBSyncTool.Services
             }
             catch (Exception ex)
             {
+                // Dispose CachedData on error - retry will re-fetch anyway
+                table.CachedData?.Dispose();
+                table.CachedData = null;
+
                 // Determine which stage failed based on current status
                 if (table.Status == TableStatus.Fetching)
                 {
                     table.Status = TableStatus.FetchError;
-                    table.CachedData = null; // No data to keep
                 }
                 else if (table.Status == TableStatus.Inserting)
                 {
                     table.Status = TableStatus.InsertError;
-                    // Keep CachedData for retry
                 }
 
                 table.Error = ex.Message;
@@ -1167,35 +1193,39 @@ namespace DBSyncTool.Services
         }
 
         /// <summary>
-        /// Clears memory used by completed tables (CopyableFields, FetchSql, etc.)
+        /// Clears memory used by ALL tables (CachedData, ControlData, etc.)
         /// Call this after processing is complete to free memory
+        /// Retry will always re-fetch from scratch
         /// </summary>
         public void ClearCompletedTablesMemory()
         {
-            int cleared = 0;
-            int failedWithData = 0;
-            long failedDataRows = 0;
+            int clearedCompleted = 0;
+            int clearedFailed = 0;
+            long totalRowsCleared = 0;
 
             foreach (var table in _tables)
             {
+                // Track rows being cleared
+                totalRowsCleared += table.CachedData?.Rows.Count ?? 0;
+                totalRowsCleared += table.ControlData?.Rows.Count ?? 0;
+
+                // Dispose data for ALL tables - retry will re-fetch anyway
+                table.CachedData?.Dispose();
+                table.CachedData = null;
+                table.ControlData?.Dispose();
+                table.ControlData = null;
+
                 if (table.Status == TableStatus.Inserted || table.Status == TableStatus.Excluded)
                 {
-                    // Clear large string and list properties no longer needed
+                    // Also clear metadata for completed tables
                     table.CopyableFields.Clear();
                     table.FetchSql = string.Empty;
                     table.SqlTemplate = string.Empty;
-                    table.CachedData?.Dispose();
-                    table.CachedData = null;
-                    table.ControlData?.Dispose();
-                    table.ControlData = null;
-                    cleared++;
+                    clearedCompleted++;
                 }
-                else if (table.CachedData != null || table.ControlData != null)
+                else if (table.Status == TableStatus.FetchError || table.Status == TableStatus.InsertError)
                 {
-                    // Track failed tables still holding data
-                    failedWithData++;
-                    failedDataRows += table.CachedData?.Rows.Count ?? 0;
-                    failedDataRows += table.ControlData?.Rows.Count ?? 0;
+                    clearedFailed++;
                 }
             }
 
@@ -1210,13 +1240,9 @@ namespace DBSyncTool.Services
             // Log memory after GC
             long memoryAfter = GC.GetTotalMemory(true) / 1024 / 1024;
 
-            if (cleared > 0)
+            if (clearedCompleted > 0 || clearedFailed > 0)
             {
-                _logger($"Cleared memory for {cleared} completed tables (Memory: {memoryBefore}MB → {memoryAfter}MB)");
-            }
-            if (failedWithData > 0)
-            {
-                _logger($"Warning: {failedWithData} failed tables still holding {failedDataRows:N0} rows in memory (for retry)");
+                _logger($"Cleared memory: {clearedCompleted} completed, {clearedFailed} failed tables, {totalRowsCleared:N0} rows (Memory: {memoryBefore}MB → {memoryAfter}MB)");
             }
         }
 
