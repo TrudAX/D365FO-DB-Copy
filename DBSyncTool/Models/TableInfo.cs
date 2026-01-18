@@ -104,7 +104,8 @@ namespace DBSyncTool.Models
         FetchError,
         Inserting,
         Inserted,
-        InsertError
+        InsertError,
+        Excluded
     }
 
     public enum CopyStrategyType

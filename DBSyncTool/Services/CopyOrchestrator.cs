@@ -94,6 +94,17 @@ namespace DBSyncTool.Services
                     // Apply exclusion patterns
                     if (MatchesAnyPattern(tableName, exclusionPatterns))
                     {
+                        // If ShowExcludedTables is enabled and table has at least 1 record, add it with Excluded status
+                        if (_config.ShowExcludedTables && rowCount > 0)
+                        {
+                            _tables.Add(new TableInfo
+                            {
+                                TableName = tableName,
+                                Tier2RowCount = rowCount,
+                                Tier2SizeGB = sizeGB,
+                                Status = TableStatus.Excluded
+                            });
+                        }
                         skipped++;
                         continue;
                     }
@@ -692,7 +703,9 @@ namespace DBSyncTool.Services
                 OnTimestampsUpdated(); // Trigger auto-save to disk
             }
 
+            table.CachedData?.Dispose();
             table.CachedData = null;
+            table.ControlData?.Dispose();
             table.ControlData = null;  // Free memory after successful operation
             table.Status = TableStatus.Inserted;
 
@@ -738,11 +751,12 @@ namespace DBSyncTool.Services
                     _logger($"[{table.TableName}] Already in perfect sync, skipping all operations");
                     table.InsertTimeSeconds = 0;
                     table.DeleteTimeSeconds = 0;
+                    table.ControlData?.Dispose();
                     table.ControlData = null;  // Free memory
                     table.Status = TableStatus.Inserted;
 
                     // Still update timestamps to current max
-                    byte[] axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, readConnection, null);
+                    byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, readConnection, null);
                     _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp ?? tier2MaxTimestamp);
                     _timestampManager.SaveToConfig(_config);
                     OnTimestampsUpdated();
@@ -908,6 +922,7 @@ namespace DBSyncTool.Services
                     OnTimestampsUpdated(); // Trigger auto-save to disk
                 }
 
+                table.ControlData?.Dispose();
                 table.ControlData = null;  // Free memory after successful operation
                 table.Status = TableStatus.Inserted;
                 _logger($"[{table.TableName}] Completed (INCREMENTAL mode)");
@@ -1058,6 +1073,7 @@ namespace DBSyncTool.Services
                 }
 
                 // STAGE 3: CLEANUP MEMORY (on success only)
+                table.CachedData?.Dispose();
                 table.CachedData = null;  // Clear memory immediately
                 table.Status = TableStatus.Inserted;
                 table.Error = string.Empty;
@@ -1105,6 +1121,13 @@ namespace DBSyncTool.Services
         /// </summary>
         private async Task ProcessSingleTableAsync(TableInfo table, CancellationToken cancellationToken)
         {
+            // Force truncate mode skips optimization - just truncate and insert
+            if (table.UseTruncate)
+            {
+                await ProcessTableStandardModeAsync(table, cancellationToken);
+                return;
+            }
+
             // Route to optimized mode if available
             if (table.UseOptimizedMode)
             {
@@ -1141,6 +1164,60 @@ namespace DBSyncTool.Services
         {
             _cancellationTokenSource?.Cancel();
             _logger("Stop requested");
+        }
+
+        /// <summary>
+        /// Clears memory used by completed tables (CopyableFields, FetchSql, etc.)
+        /// Call this after processing is complete to free memory
+        /// </summary>
+        public void ClearCompletedTablesMemory()
+        {
+            int cleared = 0;
+            int failedWithData = 0;
+            long failedDataRows = 0;
+
+            foreach (var table in _tables)
+            {
+                if (table.Status == TableStatus.Inserted || table.Status == TableStatus.Excluded)
+                {
+                    // Clear large string and list properties no longer needed
+                    table.CopyableFields.Clear();
+                    table.FetchSql = string.Empty;
+                    table.SqlTemplate = string.Empty;
+                    table.CachedData?.Dispose();
+                    table.CachedData = null;
+                    table.ControlData?.Dispose();
+                    table.ControlData = null;
+                    cleared++;
+                }
+                else if (table.CachedData != null || table.ControlData != null)
+                {
+                    // Track failed tables still holding data
+                    failedWithData++;
+                    failedDataRows += table.CachedData?.Rows.Count ?? 0;
+                    failedDataRows += table.ControlData?.Rows.Count ?? 0;
+                }
+            }
+
+            // Log memory before GC
+            long memoryBefore = GC.GetTotalMemory(false) / 1024 / 1024;
+
+            // Force garbage collection to release memory
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true, true);
+
+            // Log memory after GC
+            long memoryAfter = GC.GetTotalMemory(true) / 1024 / 1024;
+
+            if (cleared > 0)
+            {
+                _logger($"Cleared memory for {cleared} completed tables (Memory: {memoryBefore}MB → {memoryAfter}MB)");
+            }
+            if (failedWithData > 0)
+            {
+                _logger($"Warning: {failedWithData} failed tables still holding {failedDataRows:N0} rows in memory (for retry)");
+            }
         }
 
         // ========== Helper Methods ==========

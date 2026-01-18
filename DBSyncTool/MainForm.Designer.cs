@@ -93,6 +93,7 @@ namespace DBSyncTool
             lblSystemExcludedTables = new Label();
             txtSystemExcludedTables = new TextBox();
             btnInitSystemExcludedTables = new Button();
+            chkShowExcludedTables = new CheckBox();
 
             // Optimization settings
             lblOptimization = new Label();
@@ -414,6 +415,7 @@ namespace DBSyncTool
             tabConnection.Controls.Add(lblSystemExcludedTables);
             tabConnection.Controls.Add(txtSystemExcludedTables);
             tabConnection.Controls.Add(btnInitSystemExcludedTables);
+            tabConnection.Controls.Add(chkShowExcludedTables);
             tabConnection.Controls.Add(lblOptimization);
             tabConnection.Controls.Add(lblTruncateThreshold);
             tabConnection.Controls.Add(nudTruncateThreshold);
@@ -570,6 +572,13 @@ namespace DBSyncTool
             btnInitSystemExcludedTables.Size = new Size(80, 30);
             btnInitSystemExcludedTables.Text = "Init";
             btnInitSystemExcludedTables.Click += BtnInitSystemExcludedTables_Click;
+
+            chkShowExcludedTables.AutoSize = true;
+            chkShowExcludedTables.Location = new Point(10, 455);
+            chkShowExcludedTables.Name = "chkShowExcludedTables";
+            chkShowExcludedTables.Text = "Show excluded tables";
+            ToolTip showExcludedTooltip = new ToolTip();
+            showExcludedTooltip.SetToolTip(chkShowExcludedTables, "When checked, shows tables excluded by filters (with at least 1 record) in the table list with Status=Excluded");
 
             // SysRowVersion Optimization
             lblOptimization.AutoSize = true;
@@ -733,6 +742,7 @@ namespace DBSyncTool
             Name = "MainForm";
             StartPosition = FormStartPosition.CenterScreen;
             Text = "D365FO Database Sync Tool";
+            Icon = new Icon(Path.Combine(Application.StartupPath, "app.ico"));
 
             tabControl.ResumeLayout(false);
             tabTables.ResumeLayout(false);
@@ -837,6 +847,7 @@ namespace DBSyncTool
         private Label lblSystemExcludedTables;
         private TextBox txtSystemExcludedTables;
         private Button btnInitSystemExcludedTables;
+        private CheckBox chkShowExcludedTables;
 
         // Optimization controls
         private Label lblOptimization;

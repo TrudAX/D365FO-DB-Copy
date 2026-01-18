@@ -13,6 +13,7 @@ namespace DBSyncTool
         private BindingList<TableInfo> _tablesBindingList;
         private bool _isExecuting = false;
         private bool _isUpdatingComboBox = false;
+        private bool _timestampsUpdatedDuringExecution = false;
         private System.Windows.Forms.Timer _updateTimer;
 
         public MainForm()
@@ -289,6 +290,7 @@ namespace DBSyncTool
             nudParallelWorkers.Value = _currentConfig.ParallelWorkers;
 
             txtSystemExcludedTables.Text = _currentConfig.SystemExcludedTables;
+            chkShowExcludedTables.Checked = _currentConfig.ShowExcludedTables;
 
             // Optimization settings
             nudTruncateThreshold.Value = _currentConfig.TruncateThresholdPercent;
@@ -329,6 +331,7 @@ namespace DBSyncTool
             _currentConfig.ParallelWorkers = (int)nudParallelWorkers.Value;
 
             _currentConfig.SystemExcludedTables = txtSystemExcludedTables.Text;
+            _currentConfig.ShowExcludedTables = chkShowExcludedTables.Checked;
 
             // Optimization settings
             _currentConfig.TruncateThresholdPercent = (int)nudTruncateThreshold.Value;
@@ -1108,6 +1111,9 @@ namespace DBSyncTool
 
         private void Orchestrator_TimestampsUpdated(object? sender, EventArgs e)
         {
+            // Track that timestamps were updated during this execution
+            _timestampsUpdatedDuringExecution = true;
+
             // Save configuration immediately when timestamps are updated
             if (!string.IsNullOrWhiteSpace(_currentConfig.ConfigName))
             {
@@ -1136,6 +1142,7 @@ namespace DBSyncTool
             try
             {
                 _isExecuting = true;
+                _timestampsUpdatedDuringExecution = false;  // Reset flag before execution
                 UpdateButtonStates();
                 _updateTimer.Start();
 
@@ -1156,13 +1163,16 @@ namespace DBSyncTool
                 if (_orchestrator != null)
                 {
                     UpdateTablesGrid(_orchestrator.GetTables());
+
+                    // Clear memory from completed tables
+                    _orchestrator.ClearCompletedTablesMemory();
                 }
 
                 // Refresh timestamp UI (they may have been updated during processing)
                 RefreshTimestampUI();
 
-                // Auto-save configuration to persist timestamps
-                if (!string.IsNullOrWhiteSpace(_currentConfig.ConfigName))
+                // Auto-save configuration only if timestamps were actually updated
+                if (_timestampsUpdatedDuringExecution && !string.IsNullOrWhiteSpace(_currentConfig.ConfigName))
                 {
                     try
                     {
