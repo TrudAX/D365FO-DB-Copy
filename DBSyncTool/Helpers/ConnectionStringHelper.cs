@@ -7,8 +7,14 @@ namespace DBSyncTool.Helpers
     {
         /// <summary>
         /// Parses a connection string and extracts key-value pairs.
+        /// Supports two formats:
+        /// 1. Standard format: "Server=...;Database=...;User Id=...;Password=..."
+        /// 2. Three-line format:
+        ///    Line 1: Server\Database
+        ///    Line 2: Username
+        ///    Line 3: Password
         /// </summary>
-        /// <param name="connectionString">The connection string to parse (e.g., "Server=...;Database=...;User Id=...;Password=...")</param>
+        /// <param name="connectionString">The connection string to parse</param>
         /// <returns>Dictionary containing parsed key-value pairs with case-insensitive keys</returns>
         public static Dictionary<string, string> ParseConnectionString(string connectionString)
         {
@@ -17,6 +23,13 @@ namespace DBSyncTool.Helpers
             if (string.IsNullOrWhiteSpace(connectionString))
                 return result;
 
+            // Check if it's a three-line format (contains newlines but no '=' signs)
+            if (connectionString.Contains('\n') && !connectionString.Contains('='))
+            {
+                return ParseThreeLineFormat(connectionString);
+            }
+
+            // Standard key=value format
             // Split by semicolon and process each key=value pair
             var parts = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries);
 
@@ -34,6 +47,49 @@ namespace DBSyncTool.Helpers
                     result[key] = value;
                 }
             }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Parses a three-line connection string format.
+        /// Format:
+        ///   Line 1: Server\Database (e.g., "server.database.windows.net\dbname")
+        ///   Line 2: Username
+        ///   Line 3: Password
+        /// </summary>
+        /// <param name="connectionString">The three-line connection string</param>
+        /// <returns>Dictionary with Server, Database, User Id, and Password keys</returns>
+        private static Dictionary<string, string> ParseThreeLineFormat(string connectionString)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // Split by newlines and remove empty entries
+            var lines = connectionString.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                                       .Select(l => l.Trim())
+                                       .Where(l => !string.IsNullOrWhiteSpace(l))
+                                       .ToArray();
+
+            if (lines.Length < 3)
+            {
+                // Not enough lines for three-line format
+                return result;
+            }
+
+            // Line 1: Server\Database
+            var serverDbLine = lines[0];
+            var backslashIndex = serverDbLine.IndexOf('\\');
+            if (backslashIndex > 0)
+            {
+                result["Server"] = serverDbLine.Substring(0, backslashIndex).Trim();
+                result["Database"] = serverDbLine.Substring(backslashIndex + 1).Trim();
+            }
+
+            // Line 2: Username
+            result["User Id"] = lines[1];
+
+            // Line 3: Password
+            result["Password"] = lines[2];
 
             return result;
         }

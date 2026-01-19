@@ -471,7 +471,7 @@ namespace DBSyncTool
             txtTier2ServerDb.Size = new Size(600, 23);
 
             // Parse Connection String button (paste icon)
-            btnParseTier2ConnString.Location = new Point(765, 67);
+            btnParseTier2ConnString.Location = new Point(160, 45);
             btnParseTier2ConnString.Name = "btnParseTier2ConnString";
             btnParseTier2ConnString.Size = new Size(30, 23);
             btnParseTier2ConnString.Text = "📋";
