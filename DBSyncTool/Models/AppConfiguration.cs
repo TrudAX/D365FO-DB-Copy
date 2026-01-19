@@ -27,7 +27,7 @@ namespace DBSyncTool.Models
         public string TablesToExclude { get; set; } = "*Staging";
         public string SystemExcludedTables { get; set; } = "";
         public bool ShowExcludedTables { get; set; } = false;
-        public string FieldsToExclude { get; set; } = "SYSROWVERSION";
+        public string FieldsToExclude { get; set; } = "";
 
         public int DefaultRecordCount { get; set; } = 10000;
         public string StrategyOverrides { get; set; } = "";
