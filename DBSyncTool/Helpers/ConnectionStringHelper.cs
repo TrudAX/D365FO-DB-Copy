@@ -8,11 +8,11 @@ namespace DBSyncTool.Helpers
         /// <summary>
         /// Parses a connection string and extracts key-value pairs.
         /// Supports two formats:
-        /// 1. Standard format: "Server=...;Database=...;User Id=...;Password=..."
-        /// 2. Three-line format:
-        ///    Line 1: Server\Database
-        ///    Line 2: Username
-        ///    Line 3: Password
+        /// 1. Standard format: "Server=myserver.database.windows.net;Database=mydb;User Id=myuser;Password=mypass"
+        /// 2. Three-line format (from LCS):
+        ///    Line 1: myserver.database.windows.net\mydb
+        ///    Line 2: myuser
+        ///    Line 3: mypass
         /// </summary>
         /// <param name="connectionString">The connection string to parse</param>
         /// <returns>Dictionary containing parsed key-value pairs with case-insensitive keys</returns>
@@ -52,11 +52,11 @@ namespace DBSyncTool.Helpers
         }
 
         /// <summary>
-        /// Parses a three-line connection string format.
+        /// Parses a three-line connection string format (from LCS).
         /// Format:
-        ///   Line 1: Server\Database (e.g., "server.database.windows.net\dbname")
-        ///   Line 2: Username
-        ///   Line 3: Password
+        ///   Line 1: myserver.database.windows.net\mydb
+        ///   Line 2: myuser
+        ///   Line 3: mypass
         /// </summary>
         /// <param name="connectionString">The three-line connection string</param>
         /// <returns>Dictionary with Server, Database, User Id, and Password keys</returns>

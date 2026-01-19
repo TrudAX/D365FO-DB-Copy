@@ -1321,7 +1321,7 @@ namespace DBSyncTool
             {
                 Text = "Parse Connection String",
                 Width = 700,
-                Height = 250,
+                Height = 280,
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
@@ -1330,18 +1330,25 @@ namespace DBSyncTool
 
             var label = new Label
             {
-                Text = "Paste Tier2 connection string:",
+                Text = "Paste Tier2 connection string (supports two formats):\n" +
+                       "Format 1: Server=myserver.database.windows.net;Database=mydb;User Id=myuser;Password=mypass\n" +
+                       "Format 2 (three lines from LCS):\n" +
+                       "  myserver.database.windows.net\\mydb\n" +
+                       "  myuser\n" +
+                       "  mypass",
                 Left = 20,
-                Top = 20,
-                Width = 640
+                Top = 10,
+                Width = 640,
+                Height = 80,
+                AutoSize = false
             };
 
             var textBox = new TextBox
             {
                 Left = 20,
-                Top = 45,
+                Top = 95,
                 Width = 640,
-                Height = 100,
+                Height = 80,
                 Multiline = true,
                 ScrollBars = ScrollBars.Vertical,
                 WordWrap = true
@@ -1351,7 +1358,7 @@ namespace DBSyncTool
             {
                 Text = "Parse",
                 Left = 480,
-                Top = 160,
+                Top = 185,
                 DialogResult = DialogResult.OK
             };
 
@@ -1359,7 +1366,7 @@ namespace DBSyncTool
             {
                 Text = "Cancel",
                 Left = 565,
-                Top = 160,
+                Top = 185,
                 DialogResult = DialogResult.Cancel
             };
 
