@@ -474,7 +474,7 @@ namespace DBSyncTool
             btnParseTier2ConnString.Location = new Point(160, 45);
             btnParseTier2ConnString.Name = "btnParseTier2ConnString";
             btnParseTier2ConnString.Size = new Size(30, 23);
-            btnParseTier2ConnString.Text = "📋";
+            btnParseTier2ConnString.Text = "<<";
             btnParseTier2ConnString.UseVisualStyleBackColor = true;
             btnParseTier2ConnString.Click += BtnParseTier2ConnString_Click;
             ToolTip parseTier2Tooltip = new ToolTip();
