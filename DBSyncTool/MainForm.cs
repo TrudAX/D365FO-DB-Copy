@@ -207,6 +207,16 @@ namespace DBSyncTool
 
             dgvTables.Columns.Add(new DataGridViewTextBoxColumn
             {
+                DataPropertyName = "TotalTimeDisplay",
+                HeaderText = "Total (s)",
+                Name = "TotalTime",
+                Width = 70,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
                 DataPropertyName = "UnchangedDisplay",
                 HeaderText = "Unchanged",
                 Name = "Unchanged",
@@ -426,13 +436,36 @@ namespace DBSyncTool
             loadToolStripMenuItem.Enabled = !_isExecuting;
         }
 
+        // Track pending log operations to prevent UI thread overload
+        private int _pendingLogCount = 0;
+        private const int MAX_PENDING_LOGS = 100;
+
         private void Log(string message)
         {
             if (InvokeRequired)
             {
-                Invoke(new Action<string>(Log), message);
+                // Throttle: skip logging if too many pending operations
+                int pending = Interlocked.Increment(ref _pendingLogCount);
+                if (pending > MAX_PENDING_LOGS)
+                {
+                    Interlocked.Decrement(ref _pendingLogCount);
+                    return; // Drop this log message to prevent UI overload
+                }
+
+                // Use BeginInvoke (async) instead of Invoke (sync) to avoid blocking worker threads
+                BeginInvoke(new Action<string>(LogDirect), message);
                 return;
             }
+
+            // Direct call on UI thread
+            LogDirect(message);
+        }
+
+        private void LogDirect(string message)
+        {
+            // Decrement only if this came from BeginInvoke (counter was incremented)
+            if (_pendingLogCount > 0)
+                Interlocked.Decrement(ref _pendingLogCount);
 
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
             txtLog.AppendText($"[{timestamp}] {message}\r\n");
@@ -442,7 +475,8 @@ namespace DBSyncTool
         {
             if (InvokeRequired)
             {
-                Invoke(new Action<string>(UpdateStatus), status);
+                // Use BeginInvoke (async) instead of Invoke (sync) to avoid blocking worker threads
+                BeginInvoke(new Action<string>(UpdateStatus), status);
                 return;
             }
 
@@ -777,6 +811,7 @@ namespace DBSyncTool
                                 "DeleteTimeDisplay" => table.DeleteTimeDisplay,
                                 "InsertTimeDisplay" => table.InsertTimeDisplay,
                                 "CompareTimeDisplay" => table.CompareTimeDisplay,
+                                "TotalTimeDisplay" => table.TotalTimeDisplay,
                                 "UnchangedDisplay" => table.UnchangedDisplay,
                                 "ModifiedDisplay" => table.ModifiedDisplay,
                                 "NewInTier2Display" => table.NewInTier2Display,
@@ -1617,6 +1652,11 @@ namespace DBSyncTool
                     sortedItems = direction == ListSortDirection.Ascending
                         ? items.OrderBy(x => x.CompareTimeSeconds)
                         : items.OrderByDescending(x => x.CompareTimeSeconds);
+                    break;
+                case "TotalTimeDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.TotalTimeSeconds)
+                        : items.OrderByDescending(x => x.TotalTimeSeconds);
                     break;
                 case "UnchangedDisplay":
                     sortedItems = direction == ListSortDirection.Ascending

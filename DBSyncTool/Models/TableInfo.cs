@@ -34,6 +34,7 @@ namespace DBSyncTool.Models
         public decimal DeleteTimeSeconds { get; set; }
         public decimal InsertTimeSeconds { get; set; }
         public decimal CompareTimeSeconds { get; set; }  // Time for AxDB version query + comparison
+        public decimal TotalTimeSeconds { get; set; }    // Total wall-clock time for table processing
         public string Error { get; set; } = string.Empty;
 
         // Delta Comparison Results
@@ -91,6 +92,7 @@ namespace DBSyncTool.Models
         public string DeleteTimeDisplay => DeleteTimeSeconds.ToString("F2");
         public string InsertTimeDisplay => InsertTimeSeconds.ToString("F2");
         public string CompareTimeDisplay => CompareTimeSeconds.ToString("F2");
+        public string TotalTimeDisplay => TotalTimeSeconds.ToString("F2");
         public string Tier2RowCountDisplay => Tier2RowCount.ToString("N0");
         public string EstimatedSizeMBDisplay => EstimatedSizeMB > 0 ? EstimatedSizeMB.ToString("F2") : "";
         public string UnchangedDisplay => ComparisonUsed ? UnchangedCount.ToString("N0") : "";

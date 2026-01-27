@@ -10,6 +10,7 @@ namespace DBSyncTool.Helpers
 
         private readonly string _configPath;
         private readonly string _lastConfigPath;
+        private readonly object _saveLock = new object();  // Thread-safety for concurrent saves
 
         public ConfigManager()
         {
@@ -51,25 +52,29 @@ namespace DBSyncTool.Helpers
             if (!IsValidConfigName(config.ConfigName))
                 throw new ArgumentException("Configuration name can only contain letters, numbers, underscores, and hyphens");
 
-            // Update last modified
-            config.LastModified = DateTime.UtcNow;
-
-            // Clone and obfuscate passwords
-            var configToSave = CloneAndObfuscate(config);
-
-            // Save to file
-            string filePath = GetConfigFilePath(config.ConfigName);
-            var options = new JsonSerializerOptions
+            // Thread-safe save to prevent concurrent file access issues
+            lock (_saveLock)
             {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            };
+                // Update last modified
+                config.LastModified = DateTime.UtcNow;
 
-            string json = JsonSerializer.Serialize(configToSave, options);
-            File.WriteAllText(filePath, json);
+                // Clone and obfuscate passwords
+                var configToSave = CloneAndObfuscate(config);
 
-            // Update last used config
-            File.WriteAllText(_lastConfigPath, config.ConfigName);
+                // Save to file
+                string filePath = GetConfigFilePath(config.ConfigName);
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                };
+
+                string json = JsonSerializer.Serialize(configToSave, options);
+                File.WriteAllText(filePath, json);
+
+                // Update last used config
+                File.WriteAllText(_lastConfigPath, config.ConfigName);
+            }
         }
 
         /// <summary>

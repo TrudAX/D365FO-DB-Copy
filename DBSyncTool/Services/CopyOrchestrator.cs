@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
@@ -258,32 +259,40 @@ namespace DBSyncTool.Services
                 var stopwatch = Stopwatch.StartNew();
                 int completed = 0;
                 int failed = 0;
-                var semaphore = new SemaphoreSlim(_config.ParallelWorkers);
 
-                var tasks = pendingTables.Select(async table =>
+                // Pre-calculate total MB for progress estimation (avoid O(n²) LINQ inside loop)
+                decimal totalMB = pendingTables.Sum(t => t.EstimatedSizeMB);
+                long completedMB = 0;  // Use Interlocked for thread-safe updates
+
+                // Use explicit worker pattern with ConcurrentQueue for true N-way parallelism
+                // Each worker runs independently, pulling tables from the queue
+                var tableQueue = new ConcurrentQueue<TableInfo>(pendingTables);
+                int totalCount = pendingTables.Count;
+
+                // Create exactly N worker tasks
+                var workerTasks = Enumerable.Range(0, _config.ParallelWorkers).Select(async workerId =>
                 {
-                    await semaphore.WaitAsync(cancellationToken);
-                    try
+                    while (tableQueue.TryDequeue(out var table))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
+
                         await ProcessSingleTableAsync(table, cancellationToken);
 
                         if (table.Status == TableStatus.Inserted)
+                        {
                             Interlocked.Increment(ref completed);
+                            Interlocked.Add(ref completedMB, (long)(table.EstimatedSizeMB * 100));
+                        }
                         else
+                        {
                             Interlocked.Increment(ref failed);
+                        }
 
-                        // Calculate progress and time estimates
+                        // Calculate progress using pre-computed values (O(1) instead of O(n))
                         var elapsed = stopwatch.Elapsed;
                         var processedCount = completed + failed;
-
-                        // Calculate MB processed and remaining
-                        decimal mbProcessed = _tables
-                            .Where(t => t.Status == TableStatus.Inserted)
-                            .Sum(t => t.EstimatedSizeMB);
-
-                        decimal mbRemaining = _tables
-                            .Where(t => t.Status == TableStatus.Pending || t.Status == TableStatus.Fetching || t.Status == TableStatus.Inserting)
-                            .Sum(t => t.EstimatedSizeMB);
+                        decimal mbProcessed = completedMB / 100m;
+                        decimal mbRemaining = totalMB - mbProcessed;
 
                         // Calculate estimated time left based on transfer rate
                         string estimatedTimeStr = "";
@@ -297,16 +306,12 @@ namespace DBSyncTool.Services
                             }
                         }
 
-                        OnStatusUpdated($"Process Tables - {processedCount}/{pendingTables.Count} | Elapsed: {FormatTime((int)elapsed.TotalSeconds)}{estimatedTimeStr}");
-                    }
-                    finally
-                    {
-                        semaphore.Release();
+                        OnStatusUpdated($"Process Tables - {processedCount}/{totalCount} | Elapsed: {FormatTime((int)elapsed.TotalSeconds)}{estimatedTimeStr}");
                         OnTablesUpdated();
                     }
-                });
+                }).ToArray();
 
-                await Task.WhenAll(tasks);
+                await Task.WhenAll(workerTasks);
 
                 stopwatch.Stop();
                 var totalTime = FormatTime((int)stopwatch.Elapsed.TotalSeconds);
@@ -377,13 +382,17 @@ namespace DBSyncTool.Services
 
                 int completed = 0;
                 int failed = 0;
-                var semaphore = new SemaphoreSlim(_config.ParallelWorkers);
 
-                var tasks = failedTables.Select(async table =>
+                // Use explicit worker pattern with ConcurrentQueue
+                var tableQueue = new ConcurrentQueue<TableInfo>(failedTables);
+                int totalCount = failedTables.Count;
+
+                var workerTasks = Enumerable.Range(0, _config.ParallelWorkers).Select(async workerId =>
                 {
-                    await semaphore.WaitAsync(cancellationToken);
-                    try
+                    while (tableQueue.TryDequeue(out var table))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
+
                         await ProcessSingleTableAsync(table, cancellationToken);
 
                         if (table.Status == TableStatus.Inserted)
@@ -391,16 +400,12 @@ namespace DBSyncTool.Services
                         else
                             Interlocked.Increment(ref failed);
 
-                        OnStatusUpdated($"Retry Failed - {completed + failed}/{failedTables.Count} tables");
-                    }
-                    finally
-                    {
-                        semaphore.Release();
+                        OnStatusUpdated($"Retry Failed - {completed + failed}/{totalCount} tables");
                         OnTablesUpdated();
                     }
-                });
+                }).ToArray();
 
-                await Task.WhenAll(tasks);
+                await Task.WhenAll(workerTasks);
 
                 _logger($"Retry completed: {completed} succeeded, {failed} failed");
                 OnStatusUpdated($"Retry: {completed} succeeded, {failed} failed");
@@ -609,6 +614,7 @@ namespace DBSyncTool.Services
                 controlStopwatch.Stop();
 
                 table.ControlData = controlData;
+                table.FetchTimeSeconds = (decimal)controlStopwatch.Elapsed.TotalSeconds;  // Store control fetch time
                 _logger($"[{table.TableName}] Control query: {controlData.Rows.Count} records in {controlStopwatch.Elapsed.TotalSeconds:F2}s");
 
                 if (controlData.Rows.Count == 0)
@@ -620,13 +626,15 @@ namespace DBSyncTool.Services
                     return;
                 }
 
+                // STEP 2: Evaluate change volume (timed as Compare)
+                var compareStopwatch = Stopwatch.StartNew();
+
                 // Calculate min RecId and max SysRowVersion from control data
                 long minRecId = controlData.AsEnumerable().Min(r => r.Field<long>("RecId"));
                 byte[] tier2MaxTimestamp = controlData.AsEnumerable()
                     .Select(r => r.Field<byte[]>("SysRowVersion"))
                     .Max(new TimestampComparer())!;
 
-                // STEP 2: Evaluate change volume
                 long tier2ChangedCount = controlData.AsEnumerable()
                     .Count(r => TimestampHelper.CompareTimestamp(r.Field<byte[]>("SysRowVersion"), table.StoredTier2Timestamp) > 0);
 
@@ -636,6 +644,9 @@ namespace DBSyncTool.Services
                     cancellationToken);
 
                 long axdbTotalCount = await _axDbService.GetRowCountAsync(table.TableName, cancellationToken);
+
+                compareStopwatch.Stop();
+                table.CompareTimeSeconds = (decimal)compareStopwatch.Elapsed.TotalSeconds;
 
                 long totalChanges = tier2ChangedCount + axdbChangedCount;
                 double changePercent = controlData.Rows.Count > 0
@@ -656,7 +667,7 @@ namespace DBSyncTool.Services
                 table.UsedTruncate = useTruncate;
 
                 _logger($"[{table.TableName}] Tier2 changes: {tier2ChangedCount}, AxDB changes: {axdbChangedCount}, " +
-                       $"Total: {changePercent:F1}%, Excess: {excessPercent:F1}%");
+                       $"Total: {changePercent:F1}%, Excess: {excessPercent:F1}% (Compare: {table.CompareTimeSeconds:F2}s)");
 
                 if (useTruncate)
                 {
@@ -699,18 +710,19 @@ namespace DBSyncTool.Services
         /// </summary>
         private async Task ProcessTableTruncateModeAsync(TableInfo table, byte[] tier2MaxTimestamp, CancellationToken cancellationToken)
         {
-            // Fetch full data
+            // Fetch full data (add to existing control fetch time)
             var fetchStopwatch = Stopwatch.StartNew();
             DataTable data = await _tier2Service.FetchDataBySqlAsync(
                 table.TableName,
                 table.FetchSql,
                 cancellationToken);
+            fetchStopwatch.Stop();
 
             table.CachedData = data;
             table.RecordsFetched = data.Rows.Count;
-            table.FetchTimeSeconds = (decimal)fetchStopwatch.Elapsed.TotalSeconds;
+            table.FetchTimeSeconds += (decimal)fetchStopwatch.Elapsed.TotalSeconds;  // Add to control fetch time
 
-            _logger($"[{table.TableName}] Fetched {data.Rows.Count} records in {table.FetchTimeSeconds:F2}s");
+            _logger($"[{table.TableName}] Fetched {data.Rows.Count} records in {fetchStopwatch.Elapsed.TotalSeconds:F2}s (Total fetch: {table.FetchTimeSeconds:F2}s)");
 
             // Insert with truncate
             table.Status = TableStatus.Inserting;
@@ -759,6 +771,7 @@ namespace DBSyncTool.Services
                 _logger($"[{table.TableName}] No changes detected, checking for missing records only");
 
                 // Quick check: Get existing RecIds from AxDB (no transaction needed for read)
+                var compareStopwatch = Stopwatch.StartNew();
                 using var readConnection = new SqlConnection(_axDbService.GetConnectionString());
                 await readConnection.OpenAsync(cancellationToken);
 
@@ -773,6 +786,8 @@ namespace DBSyncTool.Services
                     .ToHashSet();
 
                 var missingRecIds = tier2RecIds.Where(id => !existingRecIds.Contains(id)).ToHashSet();
+                compareStopwatch.Stop();
+                table.CompareTimeSeconds += (decimal)compareStopwatch.Elapsed.TotalSeconds;
 
                 if (missingRecIds.Count == 0)
                 {
@@ -828,7 +843,8 @@ namespace DBSyncTool.Services
                     table.DeleteTimeSeconds = 0;
                 }
 
-                // Get remaining RecIds in AxDB
+                // Get remaining RecIds in AxDB (timed as Compare)
+                var recIdCompareStopwatch = Stopwatch.StartNew();
                 var existingRecIds = await _axDbService.GetRecIdSetAsync(
                     table.TableName,
                     connection,
@@ -841,6 +857,8 @@ namespace DBSyncTool.Services
                     .ToHashSet();
 
                 var missingRecIds = tier2RecIds.Where(id => !existingRecIds.Contains(id)).ToHashSet();
+                recIdCompareStopwatch.Stop();
+                table.CompareTimeSeconds += (decimal)recIdCompareStopwatch.Elapsed.TotalSeconds;
 
                 if (missingRecIds.Count == 0)
                 {
@@ -849,7 +867,8 @@ namespace DBSyncTool.Services
                 }
                 else
                 {
-                    // Step 2.1: Calculate threshold for fetching
+                    // Step 2.1: Calculate threshold for fetching (timed as Compare)
+                    var thresholdStopwatch = Stopwatch.StartNew();
                     // Get timestamps for missing RecIds from control data
                     var missingTimestamps = table.ControlData!.AsEnumerable()
                         .Where(r => missingRecIds.Contains(r.Field<long>("RecId")))
@@ -864,6 +883,8 @@ namespace DBSyncTool.Services
 
                     byte[] fetchThreshold = TimestampHelper.MinTimestamp(minMissingTimestamp, table.StoredTier2Timestamp) ?? new byte[8];
                     long minRecId = table.ControlData!.AsEnumerable().Min(r => r.Field<long>("RecId"));
+                    thresholdStopwatch.Stop();
+                    table.CompareTimeSeconds += (decimal)thresholdStopwatch.Elapsed.TotalSeconds;
 
                     // Step 2.2: Fetch data from Tier2 using timestamp threshold (includes more records than needed)
                     _logger($"[{table.TableName}] Fetching missing records (expected {missingRecIds.Count})");
@@ -882,9 +903,10 @@ namespace DBSyncTool.Services
                         minRecId,
                         sqlTemplate,
                         cancellationToken);
+                    fetchStopwatch.Stop();
 
-                    table.FetchTimeSeconds = (decimal)fetchStopwatch.Elapsed.TotalSeconds;
-                    _logger($"[{table.TableName}] Fetched {tier2Data.Rows.Count} records from Tier2");
+                    table.FetchTimeSeconds += (decimal)fetchStopwatch.Elapsed.TotalSeconds;  // Add to control fetch time
+                    _logger($"[{table.TableName}] Fetched {tier2Data.Rows.Count} records from Tier2 (Total fetch: {table.FetchTimeSeconds:F2}s)");
 
                     // Step 2.3: Filter out records that already exist in AxDB
                     var rowsToInsert = tier2Data.AsEnumerable()
@@ -936,8 +958,11 @@ namespace DBSyncTool.Services
                 _logger($"[AxDB SQL] {enableTriggers}");
                 await ExecuteNonQueryAsync(enableTriggers, connection, transaction);
 
-                // Update sequence
+                // Update sequence (timed as part of Insert)
+                var sequenceStopwatch = Stopwatch.StartNew();
                 await UpdateSequenceAsync(table, connection, transaction, cancellationToken);
+                sequenceStopwatch.Stop();
+                table.InsertTimeSeconds += (decimal)sequenceStopwatch.Elapsed.TotalSeconds;
 
                 // Commit transaction
                 transaction.Commit();
@@ -1049,7 +1074,11 @@ namespace DBSyncTool.Services
                 {
                     try
                     {
+                        var compareStopwatch = Stopwatch.StartNew();
                         long axdbTotalCount = await _axDbService.GetRowCountAsync(table.TableName, cancellationToken);
+                        compareStopwatch.Stop();
+                        table.CompareTimeSeconds += (decimal)compareStopwatch.Elapsed.TotalSeconds;
+
                         double excessPercent = table.RecordsFetched > 0
                             ? (double)(axdbTotalCount - table.RecordsFetched) / table.RecordsFetched * 100
                             : 0;
@@ -1184,22 +1213,33 @@ namespace DBSyncTool.Services
         /// </summary>
         private async Task ProcessSingleTableAsync(TableInfo table, CancellationToken cancellationToken)
         {
-            // Force truncate mode skips optimization - just truncate and insert
-            if (table.UseTruncate)
+            // Measure total wall-clock time for table processing
+            var totalStopwatch = Stopwatch.StartNew();
+
+            try
             {
+                // Force truncate mode skips optimization - just truncate and insert
+                if (table.UseTruncate)
+                {
+                    await ProcessTableStandardModeAsync(table, cancellationToken);
+                    return;
+                }
+
+                // Route to optimized mode if available
+                if (table.UseOptimizedMode)
+                {
+                    await ProcessTableOptimizedAsync(table, cancellationToken);
+                    return;
+                }
+
+                // Standard mode
                 await ProcessTableStandardModeAsync(table, cancellationToken);
-                return;
             }
-
-            // Route to optimized mode if available
-            if (table.UseOptimizedMode)
+            finally
             {
-                await ProcessTableOptimizedAsync(table, cancellationToken);
-                return;
+                totalStopwatch.Stop();
+                table.TotalTimeSeconds = (decimal)totalStopwatch.Elapsed.TotalSeconds;
             }
-
-            // Standard mode
-            await ProcessTableStandardModeAsync(table, cancellationToken);
         }
 
         /// <summary>
