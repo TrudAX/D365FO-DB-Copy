@@ -260,15 +260,17 @@ TableName|RecordCount|sql:CustomQuery -truncate
 
 Add `-truncate` flag to any strategy to force TRUNCATE mode before insert.
 
-### Strategy Changes Invalidate Saved Values
+### Strategy Changes vs Saved Values
 
-Saved values (SysRowVersion timestamps + MaxRecId, **Saved Values** tab) put a table into INCREMENTAL mode, which fetches only rows newer than the stored timestamp. A strategy edit (for example raising the record count) would therefore not be applied on the next run. `Helpers/SavedValuesHelper.cs` prevents this:
+Saved values (SysRowVersion timestamps + MaxRecId, **Saved Values** tab) put a table into INCREMENTAL mode, which fetches only rows newer than the stored timestamp. A strategy edit that *widens* the fetch (for example raising the record count) would therefore not be applied on the next run — but an edit that narrows it works fine with the saved values, so they are never cleared without asking. `Helpers/SavedValuesHelper.cs` implements the detection:
 
-- **Automatic**: `SaveConfigurationFromUI()` diffs the Copy strategy textbox against `_currentConfig.StrategyOverrides` *before* overwriting it. Any table whose line was **added, modified or removed** has its Tier2 timestamp, AxDB timestamp and MaxRecId dropped from the config. Runs on every config save (Discover Tables, Process Tables, Process Selected, Retry Failed, Run All, Save Config, the **Sort** button), so the clear is always persisted with the same save. The diff is order-independent (sorting reports nothing) and ignores blank lines/surrounding whitespace.
-- **Manual**: the **Clear Saved** button in the **Copy strategy** group (next to **Sort**) clears saved values for the tables in the currently selected strategy lines — or the caret line when nothing is selected. Asks for confirmation, then saves the config to disk. Disabled behavior while an operation is running (shows a message instead).
-- **Pending clears** (`MainForm._pendingStrategyClears`): processing an *already discovered* table list re-applies timestamps from the pre-edit strategy held in `TableInfo`, which would silently undo the clear. Cleared tables are therefore re-cleared on every subsequent config save until a Discover Tables / Run All rebuilds the list (or Process Selected re-applies the strategy for that table via `ReapplyStrategyForTable`). The set is also reset when a different configuration is loaded.
-- **"Records to copy"**: this is the default count for every table without an explicit strategy line, so a change affects most tables. `NudDefaultRecordCount_Leave` fires when the field loses focus (not on `ValueChanged`, so spinning through values prompts only once) and, if any saved values exist, asks whether to run **Clear All** on the Saved Values tab. Yes → `ClearAllSavedValues()` (the same method the tab's **Clear All** button uses); No → logged warning that the new count will not apply to tables with saved values. Silent when nothing is stored, and suppressed while an operation is running.
-- Every add/modify/remove detection and every cleared table is written to the log.
+- **Detection**: `SaveConfigurationFromUI()` diffs the Copy strategy textbox against `_currentConfig.StrategyOverrides` *before* overwriting it, reporting each table whose line was **added, modified or removed**. Runs on every config save (Discover Tables, Process Tables, Process Selected, Retry Failed, Run All, Save Config, the **Sort** button). The diff is order-independent (sorting reports nothing) and ignores blank lines/surrounding whitespace.
+- **`MayFetchMoreData`**: each change is classified by `SavedValuesHelper.ParseStrategy` (a comparison-only mirror of `CopyOrchestrator.ParseStrategyLine`, incl. the `10m` suffix). Only a plain RecId count that stays equal or gets smaller is treated as safe; **anything involving SQL, an unparseable line, or a bigger count counts as widening**. Added/removed lines are compared against `DefaultRecordCount` (the effective strategy without a line). `-truncate` on the new line is safe — it forces a full refresh, which saved values cannot restrict.
+- **Prompt**: when widening changes exist *and* those tables actually have saved values, a Yes/No dialog lists them and offers to clear (default button No). Yes → `ClearSavedValuesForTables()`; No → a log line reminding the user about the **Clear Saved** button. No dialog when nothing is stored, or when the save runs on a background thread (logs a reminder instead — never blocks a worker).
+- **Manual**: the **Clear Saved** button in the **Copy strategy** group (next to **Sort**) clears saved values for the tables in the currently selected strategy lines — or the caret line when nothing is selected. Asks for confirmation, then saves the config to disk. Refuses to run while an operation is executing (shows a message instead).
+- **Pending clears** (`MainForm._pendingStrategyClears`): processing an *already discovered* table list re-applies timestamps from the pre-edit strategy held in `TableInfo`, which would silently undo a clear. Tables the user chose to clear are therefore re-cleared on every subsequent config save (`ReapplyPendingClears`) until a Discover Tables / Run All rebuilds the list (or Process Selected re-applies the strategy for that table via `ReapplyStrategyForTable`). The set is also reset when a different configuration is loaded.
+- **"Records to copy"**: this is the default count for every table without an explicit strategy line, so a change affects most tables. `NudDefaultRecordCount_Leave` fires when the field loses focus (not on `ValueChanged`, so spinning through values prompts only once) and, if the count **increased** and any saved values exist, asks whether to run **Clear All** on the Saved Values tab. Yes → `ClearAllSavedValues()` (the same method the tab's **Clear All** button uses); No → logged warning. Silent on a decrease, when nothing is stored, or while an operation is running.
+- Every detected change, every skipped (narrowing) change and every cleared table is written to the log.
 
 ### System Tables Copy
 
@@ -497,12 +499,13 @@ Used for tables without SysRowVersion OR when optimization not available:
 ## Key Features
 
 **Get SQL Feature** (right-click context menu in MainForm)
-- Generates formatted SQL preview showing all operations without execution
-- Displays: source query, cleanup steps (numbered), insert details, sequence update
-- Shows actual TableID and sequence names
-- Includes comments explaining each step and parameter placeholders
-- Useful for testing and debugging strategy logic before execution
-- Allows developers to copy SQL for manual testing
+- Copies to the clipboard a preview of everything the selected table(s) will go through, without executing anything
+- Built by `Helpers/SqlPreviewBuilder.cs` (a pure function of `TableInfo` + `AppConfiguration`, so it can be rendered/tested outside the UI)
+- **Must stay in sync** with `CopyOrchestrator.ProcessSingleTableAsync` / `ProcessTableOptimizedAsync` / `ProcessTableStandardModeAsync` / `ProcessTableSystemModeAsync` and `AxDbDataService.InsertDataAsync` / `ExecuteIncrementalDeletesAsync` / `UpdateSequenceAsync`
+- `GetPreviewRoute` reproduces the runtime routing exactly: **System → UseTruncate (skips optimization) → UseOptimizedMode → standard**, including the fallback for a SQL strategy with no `@sysRowVersionFilter` (which drops to standard inside `ProcessTableOptimizedAsync`)
+- Header states the route and *why*, plus the inputs that drive it: Tier2 rows, effective record count, threshold %, presence of SysRowVersion/RECVERSION, saved timestamps and MaxRecId (marked "present but NOT used in this mode" when the route ignores them), AxDB TableId and sequence name
+- Branches that depend on live data are shown as labelled alternatives (TRUNCATE vs INCREMENTAL; delta comparison B1/B2/B3), while branches ruled out by the table's own properties are omitted or shown as "Skipped: …"
+- Queries match the executed statements, including the `#Tier2Control` temp table, the **three** incremental deletes, `DELETE … WHERE RecId < @MinRecId` for whole-table copies, batched `DELETE … WHERE RecId IN (…)` (5,000 per batch), trigger disable/enable, and `ALTER SEQUENCE … RESTART WITH MAX(@MaxRecId, @CurrentSeq) + 10000`
 
 **Parallel Execution**
 - Configurable parallel workers for merged fetch+insert workflow
@@ -606,7 +609,7 @@ Used for tables without SysRowVersion OR when optimization not available:
 - MainForm uses TabControl with five tabs: "Tables" (static), "Connection-{Alias}" (dynamic), "System" (system tables copy — checkbox + list + Init button), "Saved Values" (timestamps/RecIds), "Post-Transfer Actions" (SQL scripts, backup, PowerShell)
 - Post-transfer execution chain: SQL scripts → Database Backup → PowerShell script (each step conditional on previous success)
 - DataGridView bound to `List<TableInfo>` via events from CopyOrchestrator
-- Copy strategy group buttons: **Sort** (sort strategies + save) and **Clear Saved** (clear saved values for selected strategy lines — see [Strategy Changes Invalidate Saved Values](#strategy-changes-invalidate-saved-values))
+- Copy strategy group buttons: **Sort** (sort strategies + save) and **Clear Saved** (clear saved values for selected strategy lines — see [Strategy Changes vs Saved Values](#strategy-changes-vs-saved-values))
 - Help text under "AxDB Backup After Transfer" is a read-only borderless TextBox (`txtBackupDatabaseHelp`), not a Label, so the example path can be selected and copied — same pattern as `txtLastBackupPath`
 - Context menu items: "Copy Table Name" and "Get SQL"
 - Error column truncates to 50 chars, full error in tooltip

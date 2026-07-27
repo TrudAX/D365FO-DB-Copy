@@ -1,4 +1,4 @@
-using DBSyncTool.Helpers;
+﻿using DBSyncTool.Helpers;
 using DBSyncTool.Models;
 using DBSyncTool.Services;
 using System.ComponentModel;
@@ -393,11 +393,12 @@ namespace DBSyncTool
 
         private void SaveConfigurationFromUI()
         {
-            // Detect Copy strategy edits before the config is overwritten. A changed strategy
-            // must not be limited by saved values recorded for the previous strategy, so the
-            // stored timestamps/MaxRecIds for those tables are dropped below.
+            // Detect Copy strategy edits before the config is overwritten. Saved values recorded
+            // for the previous strategy would hide a widened fetch, so the user is asked about
+            // them below (see ApplyStrategyChangesToSavedValues).
             var strategyChanges = SavedValuesHelper.GetStrategyChanges(
-                _currentConfig.StrategyOverrides, txtStrategyOverrides.Text);
+                _currentConfig.StrategyOverrides, txtStrategyOverrides.Text,
+                _currentConfig.DefaultRecordCount, (int)nudDefaultRecordCount.Value);
 
             _currentConfig.Alias = txtAlias.Text;
             _currentConfig.Tier2Connection.ServerDatabase = txtTier2ServerDb.Text;
@@ -450,40 +451,113 @@ namespace DBSyncTool
             _currentConfig.PowerShellScriptPath = txtPowerShellScriptPath.Text;
             _currentConfig.PowerShellAutoExecute = chkPowerShellAutoExecute.Checked;
 
-            // Drop saved values for tables whose strategy changed (after the timestamp
+            // Handle saved values for tables whose strategy changed (after the timestamp
             // textboxes above have been copied into the config)
             ApplyStrategyChangesToSavedValues(strategyChanges);
         }
 
         /// <summary>
-        /// Removes stored timestamps/MaxRecIds for tables whose Copy strategy line was
-        /// added, modified or removed, so the new strategy is fully applied on the next run.
+        /// Reports Copy strategy edits and offers to clear the saved values that would hide
+        /// them. Nothing is cleared without the user agreeing: a smaller record count still
+        /// works fine with the saved values, so only edits that can fetch more data are raised.
         /// </summary>
         private void ApplyStrategyChangesToSavedValues(List<StrategyChange> changes)
         {
+            var candidates = new List<string>();
+
             foreach (var change in changes)
             {
-                Log($"Copy strategy {change.Kind.ToString().ToLower()}: {change.TableName}");
-                _pendingStrategyClears.Add(change.TableName);
+                string kind = change.Kind.ToString().ToLower();
+                if (change.MayFetchMoreData)
+                {
+                    Log($"Copy strategy {kind}: {change.TableName}");
+                    candidates.Add(change.TableName);
+                }
+                else
+                {
+                    Log($"Copy strategy {kind}: {change.TableName} - fetches no more data than before, saved values kept");
+                }
             }
 
-            if (_pendingStrategyClears.Count == 0) return;
+            // Tables already cleared stay cleared until a Discover Tables rebuilds the list
+            ReapplyPendingClears();
 
-            var removals = SavedValuesHelper.RemoveSavedValues(_currentConfig, _pendingStrategyClears);
-            if (removals.Count == 0)
+            var withSavedValues = SavedValuesHelper.GetTablesWithSavedValues(_currentConfig, candidates);
+            if (withSavedValues.Count == 0) return;
+
+            if (InvokeRequired)
             {
-                if (changes.Count > 0)
-                    Log("No saved values stored for the changed table(s) - nothing to clear");
+                // Background save during an operation - never block a worker with a dialog
+                Log($"Saved values still stored for changed table(s): {string.Join(", ", withSavedValues)}. " +
+                    "Select the strategy line(s) and press Clear Saved if the change fetches more data.");
                 return;
             }
 
+            var result = MessageBox.Show(
+                $"You modified the Copy strategy for {withSavedValues.Count} table(s) that have saved values:\n\n" +
+                string.Join("\n", withSavedValues.Take(20)) +
+                (withSavedValues.Count > 20 ? $"\n... and {withSavedValues.Count - 20} more" : "") +
+                "\n\nSaved values keep these tables in INCREMENTAL mode, which fetches only rows newer than the " +
+                "saved timestamp. If the change fetches MORE data (higher record count, wider SQL filter), it " +
+                "will not be applied until the saved values are cleared. If it fetches less, no action is needed.\n\n" +
+                "Clear saved values for these tables now?\n" +
+                "(You can also do it later: select the strategy lines and press Clear Saved.)",
+                "Copy Strategy Changed",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+
+            if (result == DialogResult.Yes)
+            {
+                ClearSavedValuesForTables(withSavedValues, "Copy strategy changed");
+            }
+            else
+            {
+                Log($"Saved values kept for {string.Join(", ", withSavedValues)} - select the strategy line(s) and press Clear Saved to clear them later");
+            }
+        }
+
+        /// <summary>
+        /// Re-applies clears the user already agreed to. Processing an already discovered table
+        /// list writes timestamps back from the pre-edit strategy, so the clear has to survive
+        /// until a Discover Tables rebuilds the list.
+        /// </summary>
+        private void ReapplyPendingClears()
+        {
+            if (_pendingStrategyClears.Count == 0) return;
+
+            var removals = SavedValuesHelper.RemoveSavedValues(_currentConfig, _pendingStrategyClears);
+            if (removals.Count == 0) return;
+
             foreach (var removal in removals)
             {
-                Log($"Cleared saved values for {removal.TableName} ({removal.Describe()}) - Copy strategy changed");
+                Log($"Cleared saved values for {removal.TableName} ({removal.Describe()}) - re-applied, table list not rebuilt yet");
             }
-            Log($"Cleared saved values for {removals.Count} table(s) due to Copy strategy changes");
+            RefreshTimestampUI();
+        }
+
+        /// <summary>
+        /// Removes the saved values for the given tables and keeps them cleared until a
+        /// Discover Tables rebuilds the table list.
+        /// </summary>
+        private int ClearSavedValuesForTables(List<string> tables, string reason)
+        {
+            foreach (var table in tables)
+            {
+                _pendingStrategyClears.Add(table);
+            }
+
+            var removals = SavedValuesHelper.RemoveSavedValues(_currentConfig, tables);
+            if (removals.Count == 0) return 0;
+
+            foreach (var removal in removals)
+            {
+                Log($"Cleared saved values for {removal.TableName} ({removal.Describe()}) - {reason}");
+            }
+            Log($"Cleared saved values for {removals.Count} table(s) - {reason}");
 
             RefreshTimestampUI();
+            return removals.Count;
         }
 
         private void RefreshTimestampUI()
@@ -1223,7 +1297,7 @@ namespace DBSyncTool
                 if (tableInfo == null)
                     continue;
 
-                sqlBuilder.AppendLine(GenerateSqlForTable(tableInfo));
+                sqlBuilder.AppendLine(SqlPreviewBuilder.GenerateSqlForTable(tableInfo, _currentConfig));
                 sqlBuilder.AppendLine();
             }
 
@@ -1234,227 +1308,6 @@ namespace DBSyncTool
             Log($"Generated and copied SQL for {dgvTables.SelectedRows.Count} table(s) to clipboard");
         }
 
-        private string GenerateSqlForTable(TableInfo table)
-        {
-            var sql = new System.Text.StringBuilder();
-
-            if (table.StrategyType == CopyStrategyType.System)
-                return GenerateSqlForSystemTable(table);
-
-            if (table.UseOptimizedMode)
-                return GenerateSqlForTableOptimized(table);
-
-            // Header
-            sql.AppendLine("-- ============================================");
-            sql.AppendLine($"-- Table: {table.TableName}");
-            sql.AppendLine($"-- Strategy: {table.StrategyDisplay}");
-            sql.AppendLine($"-- Mode: Standard (no stored timestamps)");
-            sql.AppendLine($"-- Cleanup: {GetCleanupDescription(table)}");
-            sql.AppendLine("-- ============================================");
-            sql.AppendLine();
-
-            // Source Query
-            sql.AppendLine("-- === SOURCE QUERY (Tier2) ===");
-            if (table.FetchSql.Contains("(1 = 1)") && !string.IsNullOrEmpty(table.SqlTemplate) &&
-                table.SqlTemplate.Contains("@sysRowVersionFilter", StringComparison.OrdinalIgnoreCase))
-            {
-                sql.AppendLine("-- Note: @sysRowVersionFilter replaced with (1 = 1) — no stored timestamps yet");
-                sql.AppendLine("-- After first successful run, INCREMENTAL mode will be used instead");
-            }
-            sql.AppendLine(table.FetchSql);
-            sql.AppendLine();
-
-            // Cleanup Queries
-            sql.AppendLine("-- === CLEANUP QUERIES (AxDB) ===");
-            sql.AppendLine(GenerateCleanupSql(table));
-            sql.AppendLine();
-
-            // Insert
-            sql.AppendLine("-- === INSERT ===");
-            sql.AppendLine("-- SqlBulkCopy will be used to insert fetched records");
-            sql.AppendLine();
-
-            // Sequence Update
-            sql.AppendLine("-- === SEQUENCE UPDATE ===");
-            sql.AppendLine($"DECLARE @MaxRecId BIGINT = (SELECT MAX(RECID) FROM [{table.TableName}])");
-            sql.AppendLine($"DECLARE @TableId INT = {table.AxDbTableId} -- AxDB TableId from SQLDICTIONARY");
-            sql.AppendLine($"IF @MaxRecId > (SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = 'SEQ_{table.AxDbTableId}')");
-            sql.AppendLine($"    ALTER SEQUENCE [SEQ_{table.AxDbTableId}] RESTART WITH @MaxRecId + {AxDbDataService.SEQUENCE_GAP}");
-
-            return sql.ToString();
-        }
-
-        private string GenerateSqlForSystemTable(TableInfo table)
-        {
-            var sql = new System.Text.StringBuilder();
-
-            sql.AppendLine("-- ============================================");
-            sql.AppendLine($"-- Table: {table.TableName}");
-            sql.AppendLine($"-- Strategy: {table.StrategyDisplay}");
-            sql.AppendLine($"-- Mode: System (full TRUNCATE + insert; copy strategies ignored)");
-            sql.AppendLine("-- ============================================");
-            sql.AppendLine();
-
-            sql.AppendLine("-- === SOURCE QUERY (Tier2) ===");
-            sql.AppendLine(string.IsNullOrEmpty(table.FetchSql)
-                ? $"SELECT * FROM [{table.TableName}]"
-                : table.FetchSql);
-            sql.AppendLine();
-
-            sql.AppendLine("-- === CLEANUP (AxDB) ===");
-            sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]  -- falls back to DELETE FROM if referenced by FK/view");
-            sql.AppendLine();
-
-            sql.AppendLine("-- === INSERT ===");
-            sql.AppendLine("-- SqlBulkCopy will be used to insert all fetched records");
-            sql.AppendLine("-- No sequence update (System tables are not RecId/sequence based)");
-
-            return sql.ToString();
-        }
-
-        private string GenerateSqlForTableOptimized(TableInfo table)
-        {
-            var sql = new System.Text.StringBuilder();
-            string tier2TsHex = table.StoredTier2Timestamp != null
-                ? TimestampHelper.ToHexString(table.StoredTier2Timestamp) : "N/A";
-            string axdbTsHex = table.StoredAxDBTimestamp != null
-                ? TimestampHelper.ToHexString(table.StoredAxDBTimestamp) : "N/A";
-
-            sql.AppendLine("-- ============================================");
-            sql.AppendLine($"-- Table: {table.TableName}");
-            sql.AppendLine($"-- Strategy: {table.StrategyDisplay}");
-            sql.AppendLine($"-- Mode: OPTIMIZED (stored timestamps found)");
-            sql.AppendLine($"-- Stored Tier2 Timestamp: {tier2TsHex}");
-            sql.AppendLine($"-- Stored AxDB Timestamp:  {axdbTsHex}");
-            sql.AppendLine("-- ============================================");
-            sql.AppendLine();
-
-            // Step 1: Control query
-            string fieldList = string.Join(", ", table.CopyableFields.Select(f => $"[{f}]"));
-            sql.AppendLine("-- === STEP 1: CONTROL QUERY (Tier2) ===");
-            sql.AppendLine("-- Lightweight query to detect changes (~1KB per 1000 records)");
-            if (table.StrategyType == CopyStrategyType.Sql && !string.IsNullOrEmpty(table.SqlTemplate)
-                && table.SqlTemplate.Contains("@sysRowVersionFilter", StringComparison.OrdinalIgnoreCase))
-            {
-                string controlSql = table.SqlTemplate
-                    .Replace("*", "[RecId], [SysRowVersion]")
-                    .Replace("@recordCount", (table.RecIdCount ?? _currentConfig.DefaultRecordCount).ToString())
-                    .Replace("@sysRowVersionFilter", "(1 = 1)", StringComparison.OrdinalIgnoreCase);
-                sql.AppendLine(controlSql);
-            }
-            else
-            {
-                sql.AppendLine($"SELECT TOP ({table.RecIdCount ?? _currentConfig.DefaultRecordCount}) [RecId], [SysRowVersion] FROM [{table.TableName}] ORDER BY RecId DESC");
-            }
-            sql.AppendLine();
-
-            // Step 2: Change detection
-            sql.AppendLine("-- === STEP 2: CHANGE DETECTION ===");
-            sql.AppendLine("-- Compare SysRowVersion against stored timestamps");
-            sql.AppendLine($"-- Tier2 changed = records WHERE SysRowVersion > {tier2TsHex}");
-            sql.AppendLine($"-- AxDB changed  = records WHERE SysRowVersion > {axdbTsHex}");
-            sql.AppendLine($"-- If change% >= threshold ({_currentConfig.TruncateThresholdPercent}%) → TRUNCATE mode");
-            sql.AppendLine($"-- If change% <  threshold ({_currentConfig.TruncateThresholdPercent}%) → INCREMENTAL mode (below)");
-            sql.AppendLine();
-
-            // Step 3: INCREMENTAL mode
-            sql.AppendLine("-- === STEP 3: INCREMENTAL MODE ===");
-            sql.AppendLine();
-            sql.AppendLine("-- Step 3.1: Delete Tier2-modified records from AxDB");
-            sql.AppendLine($"DELETE FROM [{table.TableName}] WHERE RecId IN");
-            sql.AppendLine($"  (SELECT RecId FROM ControlData WHERE SysRowVersion > @StoredTier2Timestamp)");
-            sql.AppendLine();
-            sql.AppendLine("-- Step 3.2: Delete AxDB-modified records from AxDB");
-            sql.AppendLine($"DELETE FROM [{table.TableName}] WHERE RecId IN");
-            sql.AppendLine($"  (SELECT RecId FROM ControlData WHERE SysRowVersion > @StoredAxDBTimestamp)");
-            sql.AppendLine();
-            sql.AppendLine("-- Step 3.3: Fetch missing/changed records from Tier2");
-            if (table.StrategyType == CopyStrategyType.Sql && !string.IsNullOrEmpty(table.SqlTemplate)
-                && table.SqlTemplate.Contains("@sysRowVersionFilter", StringComparison.OrdinalIgnoreCase))
-            {
-                string fetchSql = table.SqlTemplate
-                    .Replace("*", fieldList)
-                    .Replace("@recordCount", (table.RecIdCount ?? _currentConfig.DefaultRecordCount).ToString())
-                    .Replace("@sysRowVersionFilter", "SysRowVersion >= @Threshold AND RecId >= @MinRecId", StringComparison.OrdinalIgnoreCase);
-                sql.AppendLine(fetchSql);
-            }
-            else
-            {
-                sql.AppendLine($"SELECT TOP ({table.RecIdCount ?? _currentConfig.DefaultRecordCount}) {fieldList} FROM [{table.TableName}]");
-                sql.AppendLine("WHERE SysRowVersion >= @Threshold AND RecId >= @MinRecId ORDER BY RecId DESC");
-            }
-            sql.AppendLine("-- Filter client-side: remove RecIds that already exist in AxDB");
-            sql.AppendLine();
-
-            sql.AppendLine("-- Step 3.4: Bulk insert filtered records");
-            sql.AppendLine("-- SqlBulkCopy will be used to insert fetched records");
-            sql.AppendLine();
-
-            // Sequence Update
-            sql.AppendLine("-- === SEQUENCE UPDATE ===");
-            sql.AppendLine($"DECLARE @MaxRecId BIGINT = (SELECT MAX(RECID) FROM [{table.TableName}])");
-            sql.AppendLine($"IF @MaxRecId > (SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = 'SEQ_{table.AxDbTableId}')");
-            sql.AppendLine($"    ALTER SEQUENCE [SEQ_{table.AxDbTableId}] RESTART WITH @MaxRecId + {AxDbDataService.SEQUENCE_GAP}");
-
-            return sql.ToString();
-        }
-
-        private string GetCleanupDescription(TableInfo table)
-        {
-            // Check for TRUNCATE optimization (same logic as AxDbDataService)
-            if (table.Tier2RowCount > 0 &&
-                table.RecordsToCopy > 0 &&
-                table.Tier2RowCount <= table.RecordsToCopy &&
-                !table.UseTruncate)
-                return "TRUNCATE (optimization: copying all Tier2 rows)";
-
-            if (table.UseTruncate)
-                return "TRUNCATE";
-
-            switch (table.StrategyType)
-            {
-                case DBSyncTool.Models.CopyStrategyType.RecId:
-                case DBSyncTool.Models.CopyStrategyType.Sql:
-                    return "Delete by RecId";
-                default:
-                    return "Unknown";
-            }
-        }
-
-        private string GenerateCleanupSql(TableInfo table)
-        {
-            var sql = new System.Text.StringBuilder();
-
-            // Check for TRUNCATE optimization (same logic as AxDbDataService)
-            if (table.Tier2RowCount > 0 &&
-                table.RecordsToCopy > 0 &&
-                table.Tier2RowCount <= table.RecordsToCopy &&
-                !table.UseTruncate)
-            {
-                sql.AppendLine($"-- Optimization: Tier2 has {table.Tier2RowCount} rows, copying {table.RecordsToCopy}");
-                sql.AppendLine($"-- Using TRUNCATE instead of DELETE for better performance");
-                sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]");
-                return sql.ToString();
-            }
-
-            if (table.UseTruncate)
-            {
-                sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]");
-                return sql.ToString();
-            }
-
-            switch (table.StrategyType)
-            {
-                case DBSyncTool.Models.CopyStrategyType.RecId:
-                case DBSyncTool.Models.CopyStrategyType.Sql:
-                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
-                    sql.AppendLine("WHERE RECID >= @MinRecId");
-                    sql.AppendLine("-- Note: @MinRecId will be determined after fetching source data");
-                    break;
-            }
-
-            return sql.ToString();
-        }
 
         private void ExitToolStripMenuItem_Click(object sender, EventArgs e)
         {
@@ -2017,6 +1870,12 @@ namespace DBSyncTool
             _currentConfig.DefaultRecordCount = newCount;
             Log($"Records to copy changed: {oldCount:N0} -> {newCount:N0}");
 
+            if (newCount < oldCount)
+            {
+                Log("Fewer records than before - saved values stay valid and are kept");
+                return;
+            }
+
             if (!HasSavedValues())
             {
                 return;  // Nothing stored - the new count applies as is
@@ -2029,7 +1888,7 @@ namespace DBSyncTool
             }
 
             var result = MessageBox.Show(
-                $"'Records to copy' changed from {oldCount:N0} to {newCount:N0}.\n\n" +
+                $"'Records to copy' increased from {oldCount:N0} to {newCount:N0}.\n\n" +
                 "Saved values on the Saved Values tab keep tables in INCREMENTAL mode, so the new record " +
                 "count will not be applied to them until those values are cleared.\n\n" +
                 "Clear all saved values now (Clear All on the Saved Values tab)?",
@@ -2431,29 +2290,14 @@ namespace DBSyncTool
 
             if (result != DialogResult.Yes) return;
 
-            // Pick up any pending UI edits first (this also auto-clears changed strategy lines)
+            // Pick up any pending UI edits first (this also reports changed strategy lines)
             SaveConfigurationFromUI();
 
-            // Keep them cleared until a Discover Tables rebuilds the list for these tables
-            foreach (var table in tables)
-            {
-                _pendingStrategyClears.Add(table);
-            }
-
-            var removals = SavedValuesHelper.RemoveSavedValues(_currentConfig, tables);
-            if (removals.Count == 0)
+            if (ClearSavedValuesForTables(tables, "requested from Copy strategy") == 0)
             {
                 Log($"No saved values stored for the selected table(s): {string.Join(", ", tables)}");
                 return;
             }
-
-            foreach (var removal in removals)
-            {
-                Log($"Cleared saved values for {removal.TableName} ({removal.Describe()}) - requested from Copy strategy");
-            }
-            Log($"Cleared saved values for {removals.Count} of {tables.Count} selected table(s)");
-
-            RefreshTimestampUI();
 
             try
             {
