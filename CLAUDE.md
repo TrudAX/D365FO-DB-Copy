@@ -260,6 +260,16 @@ TableName|RecordCount|sql:CustomQuery -truncate
 
 Add `-truncate` flag to any strategy to force TRUNCATE mode before insert.
 
+### Strategy Changes Invalidate Saved Values
+
+Saved values (SysRowVersion timestamps + MaxRecId, **Saved Values** tab) put a table into INCREMENTAL mode, which fetches only rows newer than the stored timestamp. A strategy edit (for example raising the record count) would therefore not be applied on the next run. `Helpers/SavedValuesHelper.cs` prevents this:
+
+- **Automatic**: `SaveConfigurationFromUI()` diffs the Copy strategy textbox against `_currentConfig.StrategyOverrides` *before* overwriting it. Any table whose line was **added, modified or removed** has its Tier2 timestamp, AxDB timestamp and MaxRecId dropped from the config. Runs on every config save (Discover Tables, Process Tables, Process Selected, Retry Failed, Run All, Save Config, the **Sort** button), so the clear is always persisted with the same save. The diff is order-independent (sorting reports nothing) and ignores blank lines/surrounding whitespace.
+- **Manual**: the **Clear Saved** button in the **Copy strategy** group (next to **Sort**) clears saved values for the tables in the currently selected strategy lines — or the caret line when nothing is selected. Asks for confirmation, then saves the config to disk. Disabled behavior while an operation is running (shows a message instead).
+- **Pending clears** (`MainForm._pendingStrategyClears`): processing an *already discovered* table list re-applies timestamps from the pre-edit strategy held in `TableInfo`, which would silently undo the clear. Cleared tables are therefore re-cleared on every subsequent config save until a Discover Tables / Run All rebuilds the list (or Process Selected re-applies the strategy for that table via `ReapplyStrategyForTable`). The set is also reset when a different configuration is loaded.
+- **"Records to copy"**: this is the default count for every table without an explicit strategy line, so a change affects most tables. `NudDefaultRecordCount_Leave` fires when the field loses focus (not on `ValueChanged`, so spinning through values prompts only once) and, if any saved values exist, asks whether to run **Clear All** on the Saved Values tab. Yes → `ClearAllSavedValues()` (the same method the tab's **Clear All** button uses); No → logged warning that the new count will not apply to tables with saved values. Silent when nothing is stored, and suppressed while an operation is running.
+- Every add/modify/remove detection and every cleared table is written to the log.
+
 ### System Tables Copy
 
 D365FO has metadata/security tables that are NOT registered in SQLDICTIONARY and do not follow the standard structure (no `RecId`, no `SEQ_{TableID}` sequence, no `SysRowVersion`). The normal Discover Tables flow skips them. The **System** tab lets you copy these anyway.
@@ -596,6 +606,8 @@ Used for tables without SysRowVersion OR when optimization not available:
 - MainForm uses TabControl with five tabs: "Tables" (static), "Connection-{Alias}" (dynamic), "System" (system tables copy — checkbox + list + Init button), "Saved Values" (timestamps/RecIds), "Post-Transfer Actions" (SQL scripts, backup, PowerShell)
 - Post-transfer execution chain: SQL scripts → Database Backup → PowerShell script (each step conditional on previous success)
 - DataGridView bound to `List<TableInfo>` via events from CopyOrchestrator
+- Copy strategy group buttons: **Sort** (sort strategies + save) and **Clear Saved** (clear saved values for selected strategy lines — see [Strategy Changes Invalidate Saved Values](#strategy-changes-invalidate-saved-values))
+- Help text under "AxDB Backup After Transfer" is a read-only borderless TextBox (`txtBackupDatabaseHelp`), not a Label, so the example path can be selected and copied — same pattern as `txtLastBackupPath`
 - Context menu items: "Copy Table Name" and "Get SQL"
 - Error column truncates to 50 chars, full error in tooltip
 - Action buttons enabled/disabled based on execution state via event handlers

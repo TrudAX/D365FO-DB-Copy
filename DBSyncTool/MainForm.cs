@@ -16,6 +16,12 @@ namespace DBSyncTool
         private bool _timestampsUpdatedDuringExecution = false;
         private System.Windows.Forms.Timer _updateTimer;
 
+        // Tables whose Copy strategy changed and whose saved values must stay cleared until
+        // the new strategy is actually applied (Discover Tables / Process Selected). Processing
+        // an already discovered table list writes timestamps back from the pre-edit strategy,
+        // so the clear is re-applied on every config save until then.
+        private readonly HashSet<string> _pendingStrategyClears = new(StringComparer.OrdinalIgnoreCase);
+
         public MainForm()
         {
             InitializeComponent();
@@ -304,6 +310,9 @@ namespace DBSyncTool
 
         private void LoadConfigurationIntoUI()
         {
+            // Pending clears belong to the configuration being replaced
+            _pendingStrategyClears.Clear();
+
             // Connection tab
             txtAlias.Text = _currentConfig.Alias;
             txtTier2ServerDb.Text = _currentConfig.Tier2Connection.ServerDatabase;
@@ -384,6 +393,12 @@ namespace DBSyncTool
 
         private void SaveConfigurationFromUI()
         {
+            // Detect Copy strategy edits before the config is overwritten. A changed strategy
+            // must not be limited by saved values recorded for the previous strategy, so the
+            // stored timestamps/MaxRecIds for those tables are dropped below.
+            var strategyChanges = SavedValuesHelper.GetStrategyChanges(
+                _currentConfig.StrategyOverrides, txtStrategyOverrides.Text);
+
             _currentConfig.Alias = txtAlias.Text;
             _currentConfig.Tier2Connection.ServerDatabase = txtTier2ServerDb.Text;
             _currentConfig.Tier2Connection.Username = txtTier2Username.Text;
@@ -434,6 +449,41 @@ namespace DBSyncTool
             // PowerShell Script
             _currentConfig.PowerShellScriptPath = txtPowerShellScriptPath.Text;
             _currentConfig.PowerShellAutoExecute = chkPowerShellAutoExecute.Checked;
+
+            // Drop saved values for tables whose strategy changed (after the timestamp
+            // textboxes above have been copied into the config)
+            ApplyStrategyChangesToSavedValues(strategyChanges);
+        }
+
+        /// <summary>
+        /// Removes stored timestamps/MaxRecIds for tables whose Copy strategy line was
+        /// added, modified or removed, so the new strategy is fully applied on the next run.
+        /// </summary>
+        private void ApplyStrategyChangesToSavedValues(List<StrategyChange> changes)
+        {
+            foreach (var change in changes)
+            {
+                Log($"Copy strategy {change.Kind.ToString().ToLower()}: {change.TableName}");
+                _pendingStrategyClears.Add(change.TableName);
+            }
+
+            if (_pendingStrategyClears.Count == 0) return;
+
+            var removals = SavedValuesHelper.RemoveSavedValues(_currentConfig, _pendingStrategyClears);
+            if (removals.Count == 0)
+            {
+                if (changes.Count > 0)
+                    Log("No saved values stored for the changed table(s) - nothing to clear");
+                return;
+            }
+
+            foreach (var removal in removals)
+            {
+                Log($"Cleared saved values for {removal.TableName} ({removal.Describe()}) - Copy strategy changed");
+            }
+            Log($"Cleared saved values for {removals.Count} table(s) due to Copy strategy changes");
+
+            RefreshTimestampUI();
         }
 
         private void RefreshTimestampUI()
@@ -737,6 +787,10 @@ namespace DBSyncTool
                 _orchestrator.MaxRecIdsUpdated += Orchestrator_MaxRecIdsUpdated;
 
                 await _orchestrator.PrepareTableListAsync();
+
+                // Table list is now built from the current strategy with no saved values,
+                // so the clear no longer has to be re-applied on later saves
+                _pendingStrategyClears.Clear();
             });
         }
 
@@ -812,6 +866,10 @@ namespace DBSyncTool
                         Log($"Stopping Process Selected: {tableName} failed ({table.Status}). {selectedTables.Count - i - 1} remaining table(s) skipped.");
                         break;
                     }
+
+                    // Process Selected re-applies the strategy from the config, so the
+                    // timestamps just written belong to the new strategy - stop re-clearing them
+                    _pendingStrategyClears.Remove(tableName);
                 }
             });
         }
@@ -829,6 +887,9 @@ namespace DBSyncTool
                 _orchestrator.MaxRecIdsUpdated += Orchestrator_MaxRecIdsUpdated;
 
                 await _orchestrator.RunAllStagesAsync();
+
+                // Discovery inside Run All rebuilt the table list from the current strategy
+                _pendingStrategyClears.Clear();
             });
         }
 
@@ -1913,13 +1974,76 @@ namespace DBSyncTool
 
             if (result == DialogResult.Yes)
             {
-                txtTier2Timestamps.Text = string.Empty;
-                txtAxDBTimestamps.Text = string.Empty;
-                txtMaxTransferredRecIds.Text = string.Empty;
-                _currentConfig.Tier2Timestamps = string.Empty;
-                _currentConfig.AxDBTimestamps = string.Empty;
-                _currentConfig.MaxTransferredRecIds = string.Empty;
-                Log("All timestamps and MaxRecIds cleared - optimization will be disabled until next successful sync");
+                ClearAllSavedValues();
+            }
+        }
+
+        /// <summary>
+        /// Clear All on the Saved Values tab: drops every stored timestamp and MaxRecId.
+        /// </summary>
+        private void ClearAllSavedValues()
+        {
+            txtTier2Timestamps.Text = string.Empty;
+            txtAxDBTimestamps.Text = string.Empty;
+            txtMaxTransferredRecIds.Text = string.Empty;
+            _currentConfig.Tier2Timestamps = string.Empty;
+            _currentConfig.AxDBTimestamps = string.Empty;
+            _currentConfig.MaxTransferredRecIds = string.Empty;
+            Log("All timestamps and MaxRecIds cleared - optimization will be disabled until next successful sync");
+        }
+
+        private bool HasSavedValues()
+        {
+            return !string.IsNullOrWhiteSpace(txtTier2Timestamps.Text) ||
+                   !string.IsNullOrWhiteSpace(txtAxDBTimestamps.Text) ||
+                   !string.IsNullOrWhiteSpace(txtMaxTransferredRecIds.Text);
+        }
+
+        /// <summary>
+        /// "Records to copy" is the default record count for every table without an explicit
+        /// strategy line, so a change affects most tables. Saved values would keep them in
+        /// INCREMENTAL mode and the new count would not be applied - offer to clear them.
+        /// Uses Leave (not ValueChanged) so spinning through values prompts only once.
+        /// </summary>
+        private void NudDefaultRecordCount_Leave(object? sender, EventArgs e)
+        {
+            if (Disposing || IsDisposed) return;  // Never prompt while the form is closing
+
+            int newCount = (int)nudDefaultRecordCount.Value;
+            int oldCount = _currentConfig.DefaultRecordCount;
+            if (newCount == oldCount) return;
+
+            // Accept the new value now so the same edit does not prompt again
+            _currentConfig.DefaultRecordCount = newCount;
+            Log($"Records to copy changed: {oldCount:N0} -> {newCount:N0}");
+
+            if (!HasSavedValues())
+            {
+                return;  // Nothing stored - the new count applies as is
+            }
+
+            if (_isExecuting)
+            {
+                Log("Saved values not cleared - an operation is running. Use Clear All on the Saved Values tab afterwards.");
+                return;
+            }
+
+            var result = MessageBox.Show(
+                $"'Records to copy' changed from {oldCount:N0} to {newCount:N0}.\n\n" +
+                "Saved values on the Saved Values tab keep tables in INCREMENTAL mode, so the new record " +
+                "count will not be applied to them until those values are cleared.\n\n" +
+                "Clear all saved values now (Clear All on the Saved Values tab)?",
+                "Records To Copy Changed",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (result == DialogResult.Yes)
+            {
+                ClearAllSavedValues();
+            }
+            else
+            {
+                Log("Saved values kept - the new 'Records to copy' value will not be applied to tables that have saved values");
             }
         }
 
@@ -2275,12 +2399,108 @@ namespace DBSyncTool
             }
         }
 
+        private void BtnClearSavedForStrategy_Click(object sender, EventArgs e)
+        {
+            if (_isExecuting)
+            {
+                MessageBox.Show("Cannot clear saved values while an operation is running.",
+                    "Operation In Progress", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var tables = GetSelectedStrategyLines()
+                .Select(SavedValuesHelper.GetStrategyTableName)
+                .Where(n => !string.IsNullOrEmpty(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (tables.Count == 0)
+            {
+                MessageBox.Show("Select one or more lines in Per-Table Strategy first (or place the cursor on a line).",
+                    "No Lines Selected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var result = MessageBox.Show(
+                $"Clear saved timestamps and MaxRecIds for {tables.Count} table(s)?\n\n" +
+                string.Join("\n", tables.Take(20)) +
+                (tables.Count > 20 ? $"\n... and {tables.Count - 20} more" : "") +
+                "\n\nThese tables will be fully re-compared on the next run.",
+                "Clear Saved Values", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+            if (result != DialogResult.Yes) return;
+
+            // Pick up any pending UI edits first (this also auto-clears changed strategy lines)
+            SaveConfigurationFromUI();
+
+            // Keep them cleared until a Discover Tables rebuilds the list for these tables
+            foreach (var table in tables)
+            {
+                _pendingStrategyClears.Add(table);
+            }
+
+            var removals = SavedValuesHelper.RemoveSavedValues(_currentConfig, tables);
+            if (removals.Count == 0)
+            {
+                Log($"No saved values stored for the selected table(s): {string.Join(", ", tables)}");
+                return;
+            }
+
+            foreach (var removal in removals)
+            {
+                Log($"Cleared saved values for {removal.TableName} ({removal.Describe()}) - requested from Copy strategy");
+            }
+            Log($"Cleared saved values for {removals.Count} of {tables.Count} selected table(s)");
+
+            RefreshTimestampUI();
+
+            try
+            {
+                _configManager.SaveConfiguration(_currentConfig);
+            }
+            catch (Exception ex)
+            {
+                Log($"Saved values cleared but config save failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Strategy lines covered by the current selection in the Per-Table Strategy textbox.
+        /// With no selection, the line holding the caret is used.
+        /// </summary>
+        private List<string> GetSelectedStrategyLines()
+        {
+            var lines = new List<string>();
+            var text = txtStrategyOverrides.Text;
+            if (string.IsNullOrWhiteSpace(text)) return lines;
+
+            int start = txtStrategyOverrides.SelectionStart;
+            int length = txtStrategyOverrides.SelectionLength;
+
+            int endIndex = length > 0 ? start + length - 1 : start;
+            // A selection dragged to the start of the next line ends on the line break -
+            // walk back so that line is not treated as selected
+            while (endIndex > start && endIndex < text.Length && (text[endIndex] == '\r' || text[endIndex] == '\n'))
+            {
+                endIndex--;
+            }
+
+            int firstLine = txtStrategyOverrides.GetLineFromCharIndex(start);
+            int lastLine = txtStrategyOverrides.GetLineFromCharIndex(endIndex);
+
+            var allLines = txtStrategyOverrides.Lines;
+            for (int i = firstLine; i <= lastLine && i < allLines.Length; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(allLines[i]))
+                    lines.Add(allLines[i]);
+            }
+            return lines;
+        }
+
         private static string GetStrategyTableName(string line)
         {
-            var l = line.Trim();
-            if (l.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
-                l = l.Substring(0, l.Length - 10).Trim();
-            return l.Split('|')[0].Trim();
+            return SavedValuesHelper.GetStrategyTableName(line);
         }
 
         private static List<string> GetStrategyDuplicates(string text)

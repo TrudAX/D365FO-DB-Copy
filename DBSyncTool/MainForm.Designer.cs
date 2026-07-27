@@ -70,6 +70,7 @@ namespace DBSyncTool
             grpCol3 = new GroupBox();
             lblStrategyOverrides = new Label();
             btnSortStrategies = new Button();
+            btnClearSavedForStrategy = new Button();
             txtStrategyOverrides = new TextBox();
 
             grpCol4 = new GroupBox();
@@ -139,7 +140,7 @@ namespace DBSyncTool
 
             // Backup Database controls
             lblBackupDatabase = new Label();
-            lblBackupDatabaseHelp = new Label();
+            txtBackupDatabaseHelp = new TextBox();
             txtBackupPath = new TextBox();
             chkBackupDatabaseEnabled = new CheckBox();
             btnExecuteBackup = new Button();
@@ -365,6 +366,7 @@ namespace DBSyncTool
             // Column 3: Copy strategy
             grpCol3.Controls.Add(lblStrategyOverrides);
             grpCol3.Controls.Add(btnSortStrategies);
+            grpCol3.Controls.Add(btnClearSavedForStrategy);
             grpCol3.Controls.Add(txtStrategyOverrides);
             grpCol3.Location = new Point(700, 10);
             grpCol3.Name = "grpCol3";
@@ -401,12 +403,22 @@ namespace DBSyncTool
                 "Examples with optimization:\n" +
                 "  INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC");
 
-            btnSortStrategies.Text = "S";
+            btnSortStrategies.Text = "Sort";
             btnSortStrategies.Location = new Point(150, 21);
-            btnSortStrategies.Size = new Size(25, 20);
+            btnSortStrategies.Size = new Size(45, 21);
             btnSortStrategies.Name = "btnSortStrategies";
             tooltip.SetToolTip(btnSortStrategies, "Sort strategies alphabetically by table name and save config");
             btnSortStrategies.Click += BtnSortStrategies_Click;
+
+            btnClearSavedForStrategy.Text = "Clear Saved";
+            btnClearSavedForStrategy.Location = new Point(200, 21);
+            btnClearSavedForStrategy.Size = new Size(85, 21);
+            btnClearSavedForStrategy.Name = "btnClearSavedForStrategy";
+            tooltip.SetToolTip(btnClearSavedForStrategy,
+                "Clear saved values (timestamps + MaxRecId) for the tables in the selected strategy lines.\n" +
+                "Select one or more lines below (or place the cursor on a line), then click.\n" +
+                "Those tables are re-compared in full on the next run instead of using the saved values.");
+            btnClearSavedForStrategy.Click += BtnClearSavedForStrategy_Click;
 
             txtStrategyOverrides.Location = new Point(10, 45);
             txtStrategyOverrides.Multiline = true;
@@ -435,6 +447,7 @@ namespace DBSyncTool
             nudDefaultRecordCount.Name = "nudDefaultRecordCount";
             nudDefaultRecordCount.Size = new Size(100, 23);
             nudDefaultRecordCount.Value = 10000;
+            nudDefaultRecordCount.Leave += NudDefaultRecordCount_Leave;
 
             chkTruncateAll.AutoSize = true;
             chkTruncateAll.Location = new Point(10, 55);
@@ -908,7 +921,7 @@ namespace DBSyncTool
             tabPostTransfer.Controls.Add(btnExecutePostTransfer);
             tabPostTransfer.Controls.Add(btnInitPostTransferSql);
             tabPostTransfer.Controls.Add(lblBackupDatabase);
-            tabPostTransfer.Controls.Add(lblBackupDatabaseHelp);
+            tabPostTransfer.Controls.Add(txtBackupDatabaseHelp);
             tabPostTransfer.Controls.Add(txtBackupPath);
             tabPostTransfer.Controls.Add(chkBackupDatabaseEnabled);
             tabPostTransfer.Controls.Add(btnExecuteBackup);
@@ -970,10 +983,16 @@ namespace DBSyncTool
             lblBackupDatabase.Location = new Point(10, 400);
             lblBackupDatabase.Text = "AxDB Backup After Transfer";
 
-            lblBackupDatabaseHelp.AutoSize = true;
-            lblBackupDatabaseHelp.ForeColor = Color.Gray;
-            lblBackupDatabaseHelp.Location = new Point(10, 425);
-            lblBackupDatabaseHelp.Text = "Backup file path. Use [format] for date-time tokens (C# DateTime format), e.g.: J:\\MSSQL_BACKUP\\AxDB_[yyyy_MM_dd_HHmm].bak";
+            // Read-only borderless textbox so the path example can be selected and copied
+            txtBackupDatabaseHelp.Location = new Point(10, 425);
+            txtBackupDatabaseHelp.Name = "txtBackupDatabaseHelp";
+            txtBackupDatabaseHelp.Size = new Size(800, 18);
+            txtBackupDatabaseHelp.ForeColor = Color.Gray;
+            txtBackupDatabaseHelp.ReadOnly = true;
+            txtBackupDatabaseHelp.TabStop = false;
+            txtBackupDatabaseHelp.BorderStyle = BorderStyle.None;
+            txtBackupDatabaseHelp.BackColor = SystemColors.Control;
+            txtBackupDatabaseHelp.Text = "Backup file path. Use [format] for date-time tokens (C# DateTime format), e.g.: J:\\MSSQL_BACKUP\\AxDB_[yyyy_MM_dd_HHmm].bak";
 
             txtBackupPath.Location = new Point(10, 450);
             txtBackupPath.Name = "txtBackupPath";
@@ -1252,6 +1271,7 @@ namespace DBSyncTool
         private GroupBox grpCol3;
         private Label lblStrategyOverrides;
         private Button btnSortStrategies;
+        private Button btnClearSavedForStrategy;
         private TextBox txtStrategyOverrides;
 
         private GroupBox grpCol4;
@@ -1323,7 +1343,7 @@ namespace DBSyncTool
 
         // Backup Database controls
         private Label lblBackupDatabase;
-        private Label lblBackupDatabaseHelp;
+        private TextBox txtBackupDatabaseHelp;
         private TextBox txtBackupPath;
         private CheckBox chkBackupDatabaseEnabled;
         private Button btnExecuteBackup;
